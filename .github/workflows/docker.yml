@@ -9,6 +9,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push:
@@ -38,7 +39,7 @@ jobs:
         id: meta-autofilm
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/autofilm
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/autofilm
 
       - name: Build and push autofilm image
         uses: docker/build-push-action@v5
@@ -56,7 +57,7 @@ jobs:
         id: meta-mediawarp
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/mediawarp
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/mediawarp
 
       - name: Build and push mediawarp image
         uses: docker/build-push-action@v5
