@@ -9,7 +9,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push:
@@ -35,11 +34,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
+      - name: Extract metadata for autofilm
+        id: meta-autofilm
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/autofilm
 
       - name: Build and push autofilm image
         uses: docker/build-push-action@v5
@@ -48,10 +47,16 @@ jobs:
           file: ./autofilm/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-autofilm.outputs.tags }}
+          labels: ${{ steps.meta-autofilm.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Extract metadata for mediawarp
+        id: meta-mediawarp
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/mediawarp
 
       - name: Build and push mediawarp image
         uses: docker/build-push-action@v5
@@ -60,7 +65,7 @@ jobs:
           file: ./mediawarp/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-mediawarp.outputs.tags }}
+          labels: ${{ steps.meta-mediawarp.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max 
