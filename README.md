@@ -18,27 +18,19 @@
 
 ```bash
 mkdir emby-pro && cd emby-pro
-curl -O https://raw.githubusercontent.com/your-username/emby-pro/main/docker-compose.yml
+curl -LO https://raw.githubusercontent.com/monlor/emby-pro/main/docker-compose.yml
 ```
 
 ### 2. 配置环境变量
 
-编辑 `docker-compose.yml` 文件，设置以下必需的环境变量：
+编辑 `docker-compose.yml` 文件，配置SOURCE_PATHS，支持多个Alist路径配置，保存路径名:Alist路径，用逗号分隔
 
 ```yaml
 services:
   autofilm:
     environment:
-      - ALIST_URL=http://alist:5244
-      - ALIST_USERNAME=your_alist_username
-      - ALIST_PASSWORD=your_alist_password
-      - SOURCE_PATHS=电影:/115网盘/视频影音/电影
-      - CRON="0 2 * * *"
-
-  mediawarp:
-    environment:
-      - MEDIA_SERVER_ADDR=http://emby:8096
-      - MEDIA_SERVER_AUTH=your_emby_auth_token
+      ...
+      - SOURCE_PATHS=电影:/115网盘/视频影音/电影,电视剧:/115网盘/视频影音/电视剧
 ```
 
 ### 3. 启动服务
@@ -70,6 +62,9 @@ docker-compose up -d
 services:
   autofilm:
     environment:
+      ...
+      - ALIST_USERNAME=your_alist_username
+      - ALIST_PASSWORD=your_alist_password
       - ALIST_TOKEN=your_alist_token  # 如果使用令牌认证
 
   mediawarp:
