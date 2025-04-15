@@ -1,6 +1,6 @@
 services:
   autofilm:
-    image: ghcr.io/monlor/autofilm:latest
+    image: ghcr.io/monlor/autofilm:main
     container_name: autofilm
     restart: unless-stopped
     volumes:
@@ -15,7 +15,7 @@ services:
       - embypro
 
   mediawarp:
-    image: ghcr.io/monlor/mediawarp:latest
+    image: ghcr.io/monlor/mediawarp:main
     container_name: mediawarp
     restart: unless-stopped
     ports:

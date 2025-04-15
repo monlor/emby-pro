@@ -32,6 +32,11 @@ if [ -z "$ALIST_PASSWORD" ]; then
     exit 1
 fi
 
+if [ -z "$ALIST_TOKEN" ]; then
+    echo "Error: ALIST_TOKEN environment variable is required"
+    exit 1
+fi
+
 # Optional environment variables with defaults
 CRON=${CRON:-$DEFAULT_CRON}
 FLATTEN_MODE=${FLATTEN_MODE:-$DEFAULT_FLATTEN_MODE}
