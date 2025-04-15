@@ -1,0 +1,68 @@
+services:
+  autofilm:
+    image: ghcr.io/monlor/autofilm:latest
+    container_name: autofilm
+    restart: unless-stopped
+    volumes:
+      - media:/media
+    environment:
+      - ALIST_URL=http://alist:5244
+      - ALIST_USERNAME=your_alist_username
+      - ALIST_PASSWORD=your_alist_password
+      - SOURCE_PATHS=电影:/115网盘/视频影音/电影
+      - CRON="0 2 * * *"
+    networks:
+      - embypro
+
+  mediawarp:
+    image: ghcr.io/monlor/mediawarp:latest
+    container_name: mediawarp
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      - MEDIA_SERVER_ADDR=http://emby:8096
+      - MEDIA_SERVER_AUTH=your_emby_auth_token
+    networks:
+      - embypro
+
+  emby:
+    image: emby/embyserver_arm64v8:latest
+    container_name: emby
+    restart: unless-stopped
+    ports:
+      - "8096:8096"  # HTTP
+    environment:
+      - UID=1000
+      - GID=1000
+      - GIDLIST=1000
+    volumes:
+      - config:/config  # 配置文件
+      - cache:/cache    # 缓存目录
+      - media:/media  # 媒体文件目录，只读模式
+    networks:
+      - embypro
+
+  alist:
+    image: xhofe/alist:latest
+    container_name: alist
+    volumes:
+      - alist:/opt/alist/data
+    ports:
+      - 5244:5244
+    environment:
+      - PUID=0
+      - PGID=0
+      - UMASK=022
+    restart: unless-stopped
+    networks:
+      - embypro
+
+volumes:
+  alist:
+  media:
+  config:
+  cache:
+
+networks:
+  embypro:

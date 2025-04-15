@@ -1,0 +1,69 @@
+Port: 9000                                  # MideWarp 监听端口
+
+MediaServer:                                # 媒体服务器相关设置
+  Type: Emby                                # 媒体服务器类型（可选选项：Emby、Jellyfin）
+  ADDR: http://localhost:8096               # 媒体服务器地址
+  AUTH: 2eaxxxxxxxxxa8                      # 媒体服务器认证方式
+
+Logger:                                     # 日志设定
+  AccessLogger:                             # 访问日志设定
+    Console: True                           # 是否将访问日志文件输出到终端中
+    File: False                             # 是否将访问日志文件记录到文件中
+  ServiceLogger:                            # 服务日志设定
+    Console: True                           # 是否将服务日志文件输出到终端中
+    File: True                              # 是否将服务日志文件记录到文件中
+
+Web:                                        # Web 页面修改相关设置
+  Enable: True                              # 总开关
+  Custom: True                              # 是否加载自定义静态资源
+  Index: True                               # 是否从 custom 目录读取 index.html 文件 
+  Head: |                                   # 是否添加自定义字段到 index.html 的头部中
+    <script src="/MediaWarp/custom/emby-front-end-mod/actor-plus.js"></script>
+    <script src="/MediaWarp/custom/emby-front-end-mod/emby-swiper.js"></script>
+    <script src="/MediaWarp/custom/emby-front-end-mod/emby-tab.js"></script>
+    <script src="/MediaWarp/custom/emby-front-end-mod/fanart-show.js"></script>
+    <script src="/MediaWarp/custom/emby-front-end-mod/playbackRate.js"></script>
+
+  Crx: True                                 # crx 美化（Emby：https://github.com/Nolovenodie/emby-crx；Jellyfin：https://github.com/newday-life/jellyfin-crx）
+  ActorPlus: True                           # 过滤没有头像的演员和制作人员
+  FanartShow: False                         # 显示同人图（fanart 图）
+  ExternalPlayerUrl: True                   # 是否开启外置播放器（仅 Emby）
+  Danmaku: True                             # Web 弹幕（Emby：https://github.com/9channel/dd-danmaku；Jellyfin：https://github.com/Izumiko/jellyfin-danmaku）
+  VideoTogether: True                       # 共同观影，详情见 https://videotogether.github.io/
+
+ClientFilter:                               # 客户端过滤器
+  Enable: False                             # 是否启用客户端过滤器
+  Mode: BlackList # WhileList / BlackList   # 黑白名单模式
+  ClientList:                               # 名单列表
+    - Fileball
+    - Infuse
+
+HTTPStrm:                                   # HTTPStrm 相关配置（Strm 文件内容是 标准 HTTP URL）
+  Enable: True                              # 是否开启 HttpStrm 重定向
+  TransCode: False                          # False：强制关闭转码 True：保持原有转码设置
+  PrefixList:                               # EmbyServer 中 Strm 文件的前缀（符合该前缀的 Strm 文件且被正确识别为 HTTP 协议都会路由到该规则下）
+    - /media/strm/http
+    - /media/strm/https
+
+AlistStrm:                                  # AlistStrm 相关配置（Strm 文件内容是 Alist 上文件的路径，目前仅支持适配 Alist V3）
+  Enable: True                              # 是否启用 AlistStrm 重定向
+  TransCode: True                           # False：强制关闭转码 True：保持原有转码设置
+  RawURL: False                             # Fasle：响应 Alist 服务器的直链（要求客户端可以访问到 Alist） True：直接响应 Alist 上游的真实链接（alist api 中的 raw_url 属性）
+  List:                                     # Alist 服务关配置列表
+    - ADDR: http://192.168.1.100:5244       # Alist 服务器地址
+      Username: admin                       # Alist 服务器账号
+      Password: adminadmin                  # Alist 服务器密码
+      PrefixList:                           # EmbyServer 中 Strm 文件的前缀（符合该前缀的 Strm 文件都会路由到该规则下）
+        - /media/strm/MyAlist               # 同一个 Alist 可以有多个前缀规则
+        - /mnt/cd2/strm
+    - ADDR: https://xiaoya.com              # 可以填写多个配置
+      Token: xxxxxxx                        # Token 优先级高于 Username 和 Password
+      PrefixList: 
+        - /media/strm
+
+Subtitle:                                   # 字体相关设置（仅 Emby 支持）
+  Enable: True                              # 启用
+  SRT2ASS: True                             # SRT 字幕转 ASS 字幕
+  ASSStyle:                                 # SRT 字幕转 ASS 字幕使用的样式
+    - "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"
+    - "Style: Default,楷体,20,&H03FFFFFF,&H00FFFFFF,&H00000000,&H02000000,-1,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1"
