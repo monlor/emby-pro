@@ -1,0 +1,37 @@
+services:
+  emby-pro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: emby-pro:local
+    container_name: emby-pro-local
+    restart: unless-stopped
+    environment:
+      # Override these via exported env vars or a local .env file if needed.
+      PUID: ${PUID:-501}
+      PGID: ${PGID:-20}
+      TZ: ${TZ:-Asia/Shanghai}
+
+      OPENLIST_BASE_URL: ${OPENLIST_BASE_URL:-http://192.168.100.2:5445}
+      OPENLIST_TOKEN: ${OPENLIST_TOKEN:-}
+      OPENLIST_USERNAME: ${OPENLIST_USERNAME:-test}
+      OPENLIST_PASSWORD: ${OPENLIST_PASSWORD:-abc12345}
+      OPENLIST_DIRECT_PLAY: ${OPENLIST_DIRECT_PLAY:-true}
+      OPENLIST_PATHS: ${OPENLIST_PATHS:-/115pan/视频影音/电影}
+
+      STRM_BASE_DIR: /strm
+
+      PLAY_TICKET_SECRET: ${PLAY_TICKET_SECRET:-}
+      PLAY_TICKET_TTL: ${PLAY_TICKET_TTL:-12h}
+
+      # OPENLIST_DIRECT_PLAY_USERS: monlor
+
+      STRM_OVERWRITE: false
+
+    ports:
+      # Access Emby Web and redirect/proxy traffic through the local redirect port.
+      - "28096:28096"
+
+    volumes:
+      - ${DEV_CONFIG_DIR:-./.dev/config}:/config
+      - ${DEV_STRM_DIR:-./.dev/strm}:/strm

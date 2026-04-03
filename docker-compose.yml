@@ -1,0 +1,21 @@
+services:
+  emby-pro:
+    image: ghcr.io/monlor/emby-pro:latest
+    container_name: emby-pro
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Asia/Shanghai
+      OPENLIST_BASE_URL: https://list.example.com
+      OPENLIST_USERNAME: your-openlist-user
+      OPENLIST_PASSWORD: your-openlist-password
+      OPENLIST_DIRECT_PLAY: "true"
+      OPENLIST_PATHS: /movies,/tv
+      PLAY_TICKET_TTL: 12h
+    ports:
+      - "8096:8096"
+      - "28096:28096"
+    volumes:
+      - ./config:/config
+      - ./strm:/strm

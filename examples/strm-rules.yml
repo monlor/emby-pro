@@ -1,0 +1,16 @@
+defaults:
+  clean_removed: true
+  # true: force rewrite matched .strm files on each scan
+  # false: only rewrite when tracked content/path changes
+  overwrite: true
+  flatten: false
+
+rules:
+  - name: movies
+    source_path: /movies
+    target_path: /strm/movies
+    exclude_regex: "/sample|trailer/i"
+
+  - name: tv
+    source_path: /tv
+    target_path: /strm/tv
