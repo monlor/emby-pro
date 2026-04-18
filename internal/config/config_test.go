@@ -43,6 +43,9 @@ func TestBuildEnvRulesDefaultTarget(t *testing.T) {
 	if got, want := cfg.Redirect.PlayTicketTTL, 12*time.Hour; got != want {
 		t.Fatalf("play ticket ttl = %s, want %s", got, want)
 	}
+	if got, want := cfg.Sync.MinFileSize, int64(defaultMinFileSize); got != want {
+		t.Fatalf("min file size = %d, want %d", got, want)
+	}
 	if !cfg.Redirect.DirectPlayWeb {
 		t.Fatalf("expected web direct play to be enabled by default")
 	}
@@ -126,6 +129,43 @@ func TestLoadSupportsExplicitPublicURL(t *testing.T) {
 	}
 	if got, want := cfg.OpenList.PublicURL, "https://list.example.com"; got != want {
 		t.Fatalf("openlist public url = %s, want %s", got, want)
+	}
+}
+
+func TestLoadSupportsExplicitMinFileSize(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_MIN_FILE_SIZE", "20M")
+	t.Setenv("STRM_BASE_DIR", "/strm")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got, want := cfg.Sync.MinFileSize, int64(20*1024*1024); got != want {
+		t.Fatalf("min file size = %d, want %d", got, want)
+	}
+}
+
+func TestLoadRejectsInvalidMinFileSize(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_MIN_FILE_SIZE", "15XYZ")
+	t.Setenv("STRM_BASE_DIR", "/strm")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "STRM_MIN_FILE_SIZE") {
+		t.Fatalf("expected invalid STRM_MIN_FILE_SIZE error, got %v", err)
 	}
 }
 

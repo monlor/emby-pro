@@ -209,6 +209,9 @@ func (s *Syncer) scanDir(ctx context.Context, rule config.Rule, dir index.DirRec
 		if !s.isVideo(entry.Name) {
 			continue
 		}
+		if entry.Size < s.cfg.Sync.MinFileSize {
+			continue
+		}
 
 		relPath := relativeSourcePath(rule.SourcePath, sourcePath)
 		if !rule.ShouldKeep(relPath) {
@@ -271,21 +274,21 @@ func (s *Syncer) scanDir(ctx context.Context, rule config.Rule, dir index.DirRec
 		}
 	}
 
-		if rule.CleanRemovedValue(s.cfg.Sync.CleanRemoved) {
-			for _, file := range existingFiles {
-				if _, ok := seenFiles[file.SourcePath]; ok {
-					continue
+	if rule.CleanRemovedValue(s.cfg.Sync.CleanRemoved) {
+		for _, file := range existingFiles {
+			if _, ok := seenFiles[file.SourcePath]; ok {
+				continue
+			}
+			if _, ok := activeTargets[file.TargetPath]; !ok {
+				if err := os.Remove(file.TargetPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+					s.warnf("remove file %s: %v", file.TargetPath, err)
+				} else {
+					removedFiles++
 				}
-				if _, ok := activeTargets[file.TargetPath]; !ok {
-					if err := os.Remove(file.TargetPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-						s.warnf("remove file %s: %v", file.TargetPath, err)
-					} else {
-						removedFiles++
-					}
-				}
-				if err := s.store.DeleteFile(rule.Name, file.SourcePath); err != nil {
-					return fmt.Errorf("delete file %s: %w", file.SourcePath, err)
-				}
+			}
+			if err := s.store.DeleteFile(rule.Name, file.SourcePath); err != nil {
+				return fmt.Errorf("delete file %s: %w", file.SourcePath, err)
+			}
 			if !rule.FlattenValue() {
 				if _, ok := activeTargets[file.TargetPath]; ok {
 					continue
@@ -298,18 +301,18 @@ func (s *Syncer) scanDir(ctx context.Context, rule config.Rule, dir index.DirRec
 			if _, ok := seenDirs[childDir]; ok {
 				continue
 			}
-				if !rule.FlattenValue() {
-					localDir := s.targetDirFor(rule, childDir)
-					if localDir != rule.TargetPath {
-						if err := os.RemoveAll(localDir); err != nil {
-							s.warnf("remove dir %s: %v", localDir, err)
-						} else {
-							removedDirs++
-						}
-						s.removeEmptyParents(filepath.Dir(localDir), rule.TargetPath)
+			if !rule.FlattenValue() {
+				localDir := s.targetDirFor(rule, childDir)
+				if localDir != rule.TargetPath {
+					if err := os.RemoveAll(localDir); err != nil {
+						s.warnf("remove dir %s: %v", localDir, err)
+					} else {
+						removedDirs++
 					}
+					s.removeEmptyParents(filepath.Dir(localDir), rule.TargetPath)
 				}
-				if err := s.store.DeleteDirSubtree(rule.Name, childDir); err != nil {
+			}
+			if err := s.store.DeleteDirSubtree(rule.Name, childDir); err != nil {
 				return fmt.Errorf("delete subtree %s: %w", childDir, err)
 			}
 		}

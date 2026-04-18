@@ -156,6 +156,109 @@ func TestRunOnceScansNewChildDirsInSameCycle(t *testing.T) {
 	}
 }
 
+func TestRunOnceSkipsFilesSmallerThanMinFileSize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/fs/list" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "success",
+			"data": map[string]any{
+				"total": 1,
+				"content": []map[string]any{
+					{
+						"name":     "demo.mp4",
+						"is_dir":   false,
+						"size":     123,
+						"modified": time.Now().Format(time.RFC3339),
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	store, err := index.Open(filepath.Join(tempDir, "index.db"))
+	if err != nil {
+		t.Fatalf("index.Open() error = %v", err)
+	}
+	defer store.Close()
+
+	client, err := openlist.NewClient(config.OpenListConfig{
+		BaseURL:        server.URL,
+		Token:          "token",
+		RequestTimeout: 5 * time.Second,
+		Retry:          1,
+		RetryBackoff:   time.Second,
+		ListPerPage:    100,
+	})
+	if err != nil {
+		t.Fatalf("openlist.NewClient() error = %v", err)
+	}
+
+	cfg := config.Config{
+		OpenList: config.OpenListConfig{
+			BaseURL:        server.URL,
+			Token:          "token",
+			RequestTimeout: 5 * time.Second,
+			Retry:          1,
+			RetryBackoff:   time.Second,
+			ListPerPage:    100,
+		},
+		Redirect: config.RedirectConfig{
+			PublicURL:        "http://127.0.0.1:18097",
+			ListenAddr:       "127.0.0.1:18097",
+			PlayTicketSecret: "test-secret",
+			PlayTicketTTL:    12 * time.Hour,
+		},
+		Sync: config.SyncConfig{
+			BaseDir:             filepath.Join(tempDir, "strm"),
+			RuleFile:            filepath.Join(tempDir, "none.yml"),
+			IndexDB:             filepath.Join(tempDir, "index.db"),
+			ScanInterval:        time.Millisecond,
+			FullRescanInterval:  time.Hour,
+			MaxDirsPerCycle:     10,
+			MaxRequestsPerCycle: 20,
+			MinFileSize:         200,
+			VideoExts: map[string]struct{}{
+				".mp4": {},
+			},
+			CleanRemoved: true,
+			Overwrite:    true,
+			LogLevel:     "debug",
+		},
+		Rules: []config.Rule{
+			{
+				Name:       "media",
+				SourcePath: "/media",
+				TargetPath: filepath.Join(tempDir, "strm", "media"),
+			},
+		},
+	}
+
+	s := New(cfg, store, client)
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+
+	targetFile := filepath.Join(tempDir, "strm", "media", "demo.strm")
+	if _, err := os.Stat(targetFile); !os.IsNotExist(err) {
+		t.Fatalf("expected no strm file for small source, got err=%v", err)
+	}
+
+	files, err := store.ListFilesByRule("media")
+	if err != nil {
+		t.Fatalf("ListFilesByRule() error = %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected no tracked files, got %d", len(files))
+	}
+}
+
 func TestResolveWriteConflictsPrefersLargestThenExtension(t *testing.T) {
 	s := &Syncer{
 		logger: log.New(io.Discard, "", 0),

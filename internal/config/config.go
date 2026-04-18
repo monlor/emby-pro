@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,6 +27,7 @@ const (
 	defaultRedirectListenAddr  = ":28096"
 	defaultRedirectPublicURL   = "http://127.0.0.1:28096"
 	defaultRedirectRoutePrefix = "/strm"
+	defaultMinFileSize         = 15 * 1024 * 1024
 )
 
 type Config struct {
@@ -58,6 +60,7 @@ type SyncConfig struct {
 	FullRescanInterval  time.Duration
 	MaxDirsPerCycle     int
 	MaxRequestsPerCycle int
+	MinFileSize         int64
 	VideoExts           map[string]struct{}
 	CleanRemoved        bool
 	Overwrite           bool
@@ -149,6 +152,7 @@ func Load() (Config, error) {
 			FullRescanInterval:  getenvDuration("STRM_FULL_RESCAN_INTERVAL", 24*time.Hour),
 			MaxDirsPerCycle:     getenvInt("STRM_MAX_DIRS_PER_CYCLE", 200),
 			MaxRequestsPerCycle: getenvInt("STRM_MAX_REQUESTS_PER_CYCLE", 1000),
+			MinFileSize:         defaultMinFileSize,
 			VideoExts:           parseExtSet(getenvString("STRM_VIDEO_EXTS", ".mp4,.mkv,.avi,.ts,.mov,.wmv,.flv,.mpg")),
 			CleanRemoved:        getenvBool("STRM_CLEAN_REMOVED", true),
 			Overwrite:           getenvBool("STRM_OVERWRITE", true),
@@ -158,6 +162,13 @@ func Load() (Config, error) {
 
 	if cfg.OpenList.BaseURL == "" {
 		return Config{}, errors.New("OPENLIST_BASE_URL is required")
+	}
+	if raw := strings.TrimSpace(os.Getenv("STRM_MIN_FILE_SIZE")); raw != "" {
+		size, err := parseSizeBytes(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid STRM_MIN_FILE_SIZE: %w", err)
+		}
+		cfg.Sync.MinFileSize = size
 	}
 	if isEnvSet("OPENLIST_DIRECT_LINK_PERMANENT") {
 		return Config{}, errors.New("OPENLIST_DIRECT_LINK_PERMANENT has been removed: OpenList link expiry is now managed by OpenList itself")
@@ -488,6 +499,48 @@ func parseExtSet(raw string) map[string]struct{} {
 		result[part] = struct{}{}
 	}
 	return result
+}
+
+func parseSizeBytes(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, errors.New("value cannot be empty")
+	}
+
+	split := 0
+	for split < len(raw) && raw[split] >= '0' && raw[split] <= '9' {
+		split++
+	}
+	if split == 0 {
+		return 0, fmt.Errorf("invalid size %q", raw)
+	}
+
+	value, err := strconv.ParseInt(raw[:split], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse size %q: %w", raw, err)
+	}
+
+	suffix := strings.ToUpper(strings.TrimSpace(raw[split:]))
+	multiplier := int64(1)
+	switch suffix {
+	case "", "B":
+		multiplier = 1
+	case "K", "KB", "KIB":
+		multiplier = 1024
+	case "M", "MB", "MIB":
+		multiplier = 1024 * 1024
+	case "G", "GB", "GIB":
+		multiplier = 1024 * 1024 * 1024
+	case "T", "TB", "TIB":
+		multiplier = 1024 * 1024 * 1024 * 1024
+	default:
+		return 0, fmt.Errorf("unsupported size suffix %q", suffix)
+	}
+
+	if value > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("size %q is too large", raw)
+	}
+	return value * multiplier, nil
 }
 
 func validateRuleNames(rules []Rule) error {
