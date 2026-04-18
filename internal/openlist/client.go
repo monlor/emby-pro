@@ -19,9 +19,9 @@ import (
 	"github.com/monlor/emby-pro/internal/config"
 )
 
-
 type Client struct {
 	baseURL      *url.URL
+	publicURL    *url.URL
 	httpClient   *http.Client
 	username     string
 	password     string
@@ -61,6 +61,13 @@ func NewClient(cfg config.OpenListConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse base url: %w", err)
 	}
+	publicURL := baseURL
+	if cfg.PublicURL != "" {
+		publicURL, err = url.Parse(cfg.PublicURL)
+		if err != nil {
+			return nil, fmt.Errorf("parse public url: %w", err)
+		}
+	}
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		TLSClientConfig: &tls.Config{
@@ -69,7 +76,8 @@ func NewClient(cfg config.OpenListConfig) (*Client, error) {
 		ForceAttemptHTTP2: !cfg.DisableHTTP2,
 	}
 	return &Client{
-		baseURL: baseURL,
+		baseURL:   baseURL,
+		publicURL: publicURL,
 		httpClient: &http.Client{
 			Timeout:   cfg.RequestTimeout,
 			Transport: transport,
@@ -113,7 +121,7 @@ func (c *Client) Get(ctx context.Context, filePath string) (Entry, error) {
 }
 
 func (c *Client) DownloadURL(entry Entry, fullPath string) string {
-	u := *c.baseURL
+	u := *c.publicURL
 	u.RawQuery = ""
 	u.Fragment = ""
 
@@ -123,7 +131,7 @@ func (c *Client) DownloadURL(entry Entry, fullPath string) string {
 		segments[i] = url.PathEscape(segment)
 	}
 
-	basePath := strings.TrimSuffix(c.baseURL.Path, "/")
+	basePath := strings.TrimSuffix(c.publicURL.Path, "/")
 	if basePath == "" {
 		basePath = "/"
 	}
@@ -133,7 +141,7 @@ func (c *Client) DownloadURL(entry Entry, fullPath string) string {
 	}
 	u.Path = downloadPath
 	if len(segments) > 0 && segments[0] != "" {
-		u.RawPath = path.Join(strings.TrimSuffix(c.baseURL.EscapedPath(), "/"), "/d", strings.Join(segments, "/"))
+		u.RawPath = path.Join(strings.TrimSuffix(c.publicURL.EscapedPath(), "/"), "/d", strings.Join(segments, "/"))
 	}
 
 	if entry.Sign != "" {

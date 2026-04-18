@@ -38,6 +38,7 @@ type Config struct {
 
 type OpenListConfig struct {
 	BaseURL            string
+	PublicURL          string
 	Token              string
 	Username           string
 	Password           string
@@ -112,6 +113,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		OpenList: OpenListConfig{
 			BaseURL:            strings.TrimSpace(os.Getenv("OPENLIST_BASE_URL")),
+			PublicURL:          strings.TrimSpace(os.Getenv("OPENLIST_PUBLIC_URL")),
 			Token:              strings.TrimSpace(os.Getenv("OPENLIST_TOKEN")),
 			Username:           strings.TrimSpace(os.Getenv("OPENLIST_USERNAME")),
 			Password:           strings.TrimSpace(os.Getenv("OPENLIST_PASSWORD")),

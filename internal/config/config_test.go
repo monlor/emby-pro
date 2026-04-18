@@ -89,6 +89,7 @@ func TestLoadSupportsExplicitPublicURL(t *testing.T) {
 	t.Setenv("OPENLIST_PATHS", "/movies")
 	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
 	t.Setenv("PUBLIC_URL", "https://media.example.com/emby")
+	t.Setenv("OPENLIST_PUBLIC_URL", "https://list.example.com")
 	t.Setenv("STRM_BASE_DIR", "/strm")
 	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
 	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
@@ -99,6 +100,28 @@ func TestLoadSupportsExplicitPublicURL(t *testing.T) {
 	}
 	if got, want := cfg.Redirect.PublicURL, "https://media.example.com/emby"; got != want {
 		t.Fatalf("redirect public url = %s, want %s", got, want)
+	}
+	if got, want := cfg.OpenList.PublicURL, "https://list.example.com"; got != want {
+		t.Fatalf("openlist public url = %s, want %s", got, want)
+	}
+}
+
+func TestLoadAllowsEmptyOpenListPublicURL(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_BASE_DIR", "/strm")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OpenList.PublicURL != "" {
+		t.Fatalf("expected empty openlist public url, got %s", cfg.OpenList.PublicURL)
 	}
 }
 

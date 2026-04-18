@@ -196,6 +196,82 @@ func TestHandleSTRMAllowsLoopbackWithoutPlayTicket(t *testing.T) {
 	}
 }
 
+func TestHandleSTRMUsesOpenListPublicURLForRedirect(t *testing.T) {
+	openlistServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/fs/get" {
+			t.Fatalf("unexpected openlist path: %s", r.URL.Path)
+		}
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode openlist request: %v", err)
+		}
+		if req.Path != "/media/demo.mp4" {
+			t.Fatalf("unexpected openlist path: %s", req.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "success",
+			"data": map[string]any{
+				"name":   "demo.mp4",
+				"is_dir": false,
+				"sign":   "demo-sign",
+			},
+		})
+	}))
+	defer openlistServer.Close()
+
+	embyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer embyServer.Close()
+
+	openlistClient, err := openlist.NewClient(config.OpenListConfig{
+		BaseURL:        openlistServer.URL,
+		PublicURL:      "https://list.example.com/share",
+		Token:          "token",
+		RequestTimeout: 5 * time.Second,
+		Retry:          1,
+		RetryBackoff:   time.Second,
+		ListPerPage:    100,
+	})
+	if err != nil {
+		t.Fatalf("openlist.NewClient() error = %v", err)
+	}
+
+	embyClient, err := emby.NewClient(config.EmbyConfig{
+		BaseURL:        embyServer.URL,
+		ValidatePath:   "/System/Info",
+		RequestTimeout: 5 * time.Second,
+		TokenCacheTTL:  time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("emby.NewClient() error = %v", err)
+	}
+
+	server := NewServer(config.RedirectConfig{
+		ListenAddr:       ":8097",
+		PublicURL:        "https://emby.example.com",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+		PlayTicketTTL:    time.Hour,
+	}, openlistClient, embyClient, log.New(io.Discard, "", 0), time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/strm/openlist/media/demo.mp4", nil)
+	req.RemoteAddr = "127.0.0.1:43210"
+	rec := httptest.NewRecorder()
+	server.handleSTRM(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, want := rec.Header().Get("Location"), "https://list.example.com/share/d/media/demo.mp4?sign=demo-sign"; got != want {
+		t.Fatalf("redirect location = %s, want %s", got, want)
+	}
+}
+
 func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 	builder := NewBuilder(config.RedirectConfig{
 		PublicURL:        "http://127.0.0.1:8097",
