@@ -73,6 +73,7 @@ type EmbyConfig struct {
 
 type RedirectConfig struct {
 	DirectPlay       bool
+	DirectPlayWeb    bool
 	DirectPlayUsers  map[string]struct{} // user IDs or names; nil means apply DirectPlay to all
 	ListenAddr       string
 	PublicURL        string
@@ -132,6 +133,7 @@ func Load() (Config, error) {
 		},
 		Redirect: RedirectConfig{
 			DirectPlay:       getenvBool("OPENLIST_DIRECT_PLAY", true),
+			DirectPlayWeb:    getenvBool("OPENLIST_DIRECT_PLAY_WEB", true),
 			DirectPlayUsers:  parseStringSet(getenvString("OPENLIST_DIRECT_PLAY_USERS", "")),
 			ListenAddr:       defaultRedirectListenAddr,
 			PublicURL:        strings.TrimSpace(getenvString("PUBLIC_URL", defaultRedirectPublicURL)),

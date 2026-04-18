@@ -43,6 +43,9 @@ func TestBuildEnvRulesDefaultTarget(t *testing.T) {
 	if got, want := cfg.Redirect.PlayTicketTTL, 12*time.Hour; got != want {
 		t.Fatalf("play ticket ttl = %s, want %s", got, want)
 	}
+	if !cfg.Redirect.DirectPlayWeb {
+		t.Fatalf("expected web direct play to be enabled by default")
+	}
 	if got, want := cfg.Emby.BaseURL, defaultEmbyBaseURL; got != want {
 		t.Fatalf("emby base url = %s, want %s", got, want)
 	}
@@ -79,6 +82,26 @@ func TestLoadOpenListDirectPlayFlag(t *testing.T) {
 	}
 	if got, want := cfg.Redirect.PlayTicketTTL, 6*time.Hour; got != want {
 		t.Fatalf("play ticket ttl = %s, want %s", got, want)
+	}
+}
+
+func TestLoadOpenListDirectPlayWebFlag(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("OPENLIST_DIRECT_PLAY_WEB", "true")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_BASE_DIR", "/strm")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Redirect.DirectPlayWeb {
+		t.Fatalf("expected web direct play to be enabled")
 	}
 }
 

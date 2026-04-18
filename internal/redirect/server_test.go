@@ -520,6 +520,187 @@ func TestHandleProxyEmbyPreservesTranscodingWhenDirectPlayDisabled(t *testing.T)
 	}
 }
 
+func TestHandlePlaybackInfoPreservesTranscodingForWebWhenWebDirectPlayDisabled(t *testing.T) {
+	builder := NewBuilder(config.RedirectConfig{
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+	})
+	stablePath, err := builder.Build("/media/demo.mp4")
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	embyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/Items/6/PlaybackInfo" {
+			t.Fatalf("unexpected emby path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"MediaSources": []map[string]any{
+				{
+					"Id":                   "mediasource_6",
+					"Path":                 stablePath,
+					"Container":            "mkv",
+					"DirectStreamUrl":      "/videos/6/original.mkv?api_key=token",
+					"TranscodingUrl":       "/videos/6/master.m3u8?api_key=token",
+					"SupportsDirectPlay":   false,
+					"SupportsDirectStream": false,
+					"SupportsTranscoding":  true,
+				},
+			},
+		})
+	}))
+	defer embyServer.Close()
+
+	server := newTestServer(t, "http://openlist.invalid", embyServer.URL, config.RedirectConfig{
+		DirectPlay:       true,
+		DirectPlayWeb:    false,
+		ListenAddr:       ":8097",
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+		PlayTicketTTL:    12 * time.Hour,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/Items/6/PlaybackInfo?api_key=valid-token&MediaSourceId=mediasource_6", io.NopCloser(strings.NewReader(`{}`)))
+	req.Header.Set("X-Emby-Client", "Emby Web")
+	rec := httptest.NewRecorder()
+	server.handleProxyEmby(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	source := payload["MediaSources"].([]any)[0].(map[string]any)
+
+	directStreamURL, _ := source["DirectStreamUrl"].(string)
+	if got, want := directStreamURL, "/videos/6/original.mkv?api_key=token"; got != want {
+		t.Fatalf("DirectStreamUrl = %s, want %s", got, want)
+	}
+	if _, ok := source["TranscodingUrl"]; !ok {
+		t.Fatalf("expected TranscodingUrl to be preserved for web")
+	}
+	if source["SupportsTranscoding"] != true {
+		t.Fatalf("expected SupportsTranscoding=true, got %v", source["SupportsTranscoding"])
+	}
+}
+
+func TestHandlePlaybackInfoRewritesDirectStreamForWebWhenEnabled(t *testing.T) {
+	builder := NewBuilder(config.RedirectConfig{
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+	})
+	stablePath, err := builder.Build("/media/demo.mp4")
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	embyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/Items/6/PlaybackInfo" {
+			t.Fatalf("unexpected emby path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"MediaSources": []map[string]any{
+				{
+					"Id":                   "mediasource_6",
+					"Path":                 stablePath,
+					"Container":            "mkv",
+					"DirectStreamUrl":      "/videos/6/original.mkv?api_key=token",
+					"TranscodingUrl":       "/videos/6/master.m3u8?api_key=token",
+					"SupportsDirectPlay":   false,
+					"SupportsDirectStream": false,
+					"SupportsTranscoding":  true,
+				},
+			},
+		})
+	}))
+	defer embyServer.Close()
+
+	server := newTestServer(t, "http://openlist.invalid", embyServer.URL, config.RedirectConfig{
+		DirectPlay:       true,
+		DirectPlayWeb:    true,
+		ListenAddr:       ":8097",
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+		PlayTicketTTL:    12 * time.Hour,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/Items/6/PlaybackInfo?api_key=valid-token&MediaSourceId=mediasource_6", io.NopCloser(strings.NewReader(`{}`)))
+	req.Header.Set("X-Emby-Client", "Emby Web")
+	rec := httptest.NewRecorder()
+	server.handlePlaybackInfo(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	source := payload["MediaSources"].([]any)[0].(map[string]any)
+
+	directStreamURL, _ := source["DirectStreamUrl"].(string)
+	parsedDirect, err := url.Parse(directStreamURL)
+	if err != nil {
+		t.Fatalf("url.Parse(direct stream) error = %v", err)
+	}
+	if got, want := parsedDirect.Path, "/strm/openlist/media/demo.mp4"; got != want {
+		t.Fatalf("unexpected DirectStreamUrl path: %s want %s", got, want)
+	}
+	if parsedDirect.Query().Get(playTicketParam) == "" {
+		t.Fatalf("unexpected DirectStreamUrl: %s", directStreamURL)
+	}
+	if _, ok := source["TranscodingUrl"]; ok {
+		t.Fatalf("expected TranscodingUrl to be removed")
+	}
+	if source["SupportsTranscoding"] != false {
+		t.Fatalf("expected SupportsTranscoding=false, got %v", source["SupportsTranscoding"])
+	}
+}
+
+func TestIsWebClientRequest(t *testing.T) {
+	cases := []struct {
+		name    string
+		header  http.Header
+		wantWeb bool
+	}{
+		{
+			name:    "emby client header",
+			header:  http.Header{"X-Emby-Client": []string{"Emby Web"}},
+			wantWeb: true,
+		},
+		{
+			name:    "authorization header",
+			header:  http.Header{"Authorization": []string{`MediaBrowser Client="Emby Web", Device="Chrome", DeviceId="web-device"`}},
+			wantWeb: true,
+		},
+		{
+			name:    "native client",
+			header:  http.Header{"X-Emby-Client": []string{"Emby Android"}},
+			wantWeb: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header = tc.header
+			if got := isWebClientRequest(req); got != tc.wantWeb {
+				t.Fatalf("isWebClientRequest() = %v, want %v", got, tc.wantWeb)
+			}
+		})
+	}
+}
+
 func TestHandleProxyEmbyAcceptsManagedPathWithEmbyPrefix(t *testing.T) {
 	openlistServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

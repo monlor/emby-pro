@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/monlor/emby-pro/internal/config"
 	"github.com/monlor/emby-pro/internal/emby"
@@ -54,6 +55,7 @@ type Server struct {
 
 var embyTokenPattern = regexp.MustCompile(`(?i)token="?([^", ]+)"?`)
 var embyDeviceIDPattern = regexp.MustCompile(`(?i)deviceid="?([^", ]+)"?`)
+var embyClientPattern = regexp.MustCompile(`(?i)client="?([^",]+)"?`)
 var playbackInfoPathPattern = regexp.MustCompile(`(?i)^(?:/emby)?/Items/([^/]+)/PlaybackInfo$`)
 var videoStreamPathPattern = regexp.MustCompile(`(?i)^(?:/emby)?/videos/([^/]+)/(?:stream(?:/.*)?|stream\.[^/]+|original(?:/.*)?|original\.[^/]+)$`)
 var itemDownloadPathPattern = regexp.MustCompile(`(?i)^(?:/emby)?/Items/([^/]+)/Download(?:/.*)?$`)
@@ -76,6 +78,7 @@ func NewServer(cfg config.RedirectConfig, client *openlist.Client, embyClient *e
 	}
 	serverCfg := config.RedirectConfig{
 		DirectPlay:       cfg.DirectPlay,
+		DirectPlayWeb:    cfg.DirectPlayWeb,
 		DirectPlayUsers:  cfg.DirectPlayUsers,
 		ListenAddr:       cfg.ListenAddr,
 		PublicURL:        cfg.PublicURL,
@@ -149,6 +152,9 @@ func (s *Server) handleProxyEmby(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) isDirectPlayEnabled(r *http.Request) bool {
 	if !s.cfg.DirectPlay {
+		return false
+	}
+	if isWebClientRequest(r) && !s.cfg.DirectPlayWeb {
 		return false
 	}
 	if len(s.cfg.DirectPlayUsers) == 0 {
@@ -620,6 +626,66 @@ func extractEmbyDeviceID(r *http.Request) string {
 	}
 
 	return ""
+}
+
+func extractEmbyClient(r *http.Request) string {
+	candidates := []string{
+		r.URL.Query().Get("Client"),
+		r.URL.Query().Get("client"),
+		r.URL.Query().Get("X-Emby-Client"),
+		r.URL.Query().Get("x-emby-client"),
+		r.URL.Query().Get("X-MediaBrowser-Client"),
+		r.URL.Query().Get("x-mediabrowser-client"),
+		r.Header.Get("X-Emby-Client"),
+		r.Header.Get("X-MediaBrowser-Client"),
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+
+	headers := []string{
+		r.Header.Get("Authorization"),
+		r.Header.Get("X-Emby-Authorization"),
+	}
+	for _, header := range headers {
+		if header == "" {
+			continue
+		}
+		matches := embyClientPattern.FindStringSubmatch(header)
+		if len(matches) == 2 {
+			return strings.TrimSpace(matches[1])
+		}
+	}
+
+	return ""
+}
+
+func isWebClientRequest(r *http.Request) bool {
+	client := normalizeClientName(extractEmbyClient(r))
+	if client == "" {
+		return false
+	}
+	for _, token := range strings.Fields(client) {
+		if token == "web" {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeClientName(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	return strings.Join(fields, " ")
 }
 
 func extractItemID(pathValue string) string {
