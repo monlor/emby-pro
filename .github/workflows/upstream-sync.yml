@@ -1,0 +1,99 @@
+name: Sync Upstream Emby Tag
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      emby_tag:
+        description: "Optional upstream linuxserver/emby tag to sync"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEFAULT_BRANCH }}
+          fetch-depth: 0
+
+      - name: Resolve upstream tag
+        id: resolve
+        env:
+          INPUT_EMBY_TAG: ${{ github.event.inputs.emby_tag }}
+        run: |
+          python <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import re
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          pattern = re.compile(r"^\d+\.\d+\.\d+\.\d+-ls\d+$")
+          requested = os.environ.get("INPUT_EMBY_TAG", "").strip()
+
+          def fetch_json(url, headers=None):
+            req = urllib.request.Request(url, headers=headers or {})
+            with urllib.request.urlopen(req) as response:
+              return json.load(response)
+
+          if requested:
+            if not pattern.match(requested):
+              print(f"Unsupported tag format: {requested}", file=sys.stderr)
+              sys.exit(1)
+            print(f"tag={requested}")
+            sys.exit(0)
+
+          scope = urllib.parse.quote("repository:linuxserver/emby:pull", safe="")
+          token_url = f"https://ghcr.io/token?service=ghcr.io&scope={scope}"
+          token = fetch_json(token_url)["token"]
+          tags_payload = fetch_json(
+            "https://lscr.io/v2/linuxserver/emby/tags/list",
+            headers={"Authorization": f"Bearer {token}"},
+          )
+
+          def sort_key(tag):
+            version, ls_build = tag.split("-ls", 1)
+            version_parts = tuple(int(part) for part in version.split("."))
+            return version_parts + (int(ls_build),)
+
+          stable_tags = [tag for tag in tags_payload.get("tags", []) if pattern.match(tag)]
+          if not stable_tags:
+            print("No stable upstream tags found", file=sys.stderr)
+            sys.exit(1)
+
+          latest = max(stable_tags, key=sort_key)
+          print(f"tag={latest}")
+          PY
+
+      - name: Check whether tag already exists
+        id: exists
+        env:
+          TARGET_TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TARGET_TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.exists.outputs.exists == 'false'
+        env:
+          TARGET_TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TARGET_TAG}" -m "Sync upstream linuxserver/emby tag ${TARGET_TAG}"
+          git push origin "refs/tags/${TARGET_TAG}"

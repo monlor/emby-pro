@@ -5,9 +5,14 @@ on:
     branches:
       - main
     tags:
-      - "v*"
+      - "*"
   pull_request:
   workflow_dispatch:
+    inputs:
+      emby_tag:
+        description: "Optional linuxserver/emby tag to build against"
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -24,6 +29,49 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve build settings
+        id: vars
+        env:
+          INPUT_EMBY_TAG: ${{ github.event.inputs.emby_tag }}
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}"
+          ref_name="${GITHUB_REF_NAME}"
+          short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-7)"
+          emby_tag="latest"
+          tags=()
+
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request)
+              tags+=("${image}:pr-${short_sha}")
+              ;;
+            workflow_dispatch)
+              if [ -n "${INPUT_EMBY_TAG}" ]; then
+                emby_tag="${INPUT_EMBY_TAG}"
+                tags+=("${image}:${emby_tag}" "${image}:latest")
+              else
+                tags+=("${image}:latest" "${image}:sha-${short_sha}")
+              fi
+              ;;
+            push)
+              if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+                emby_tag="${ref_name}"
+                tags+=("${image}:${emby_tag}" "${image}:latest")
+              else
+                tags+=("${image}:latest" "${image}:sha-${short_sha}")
+              fi
+              ;;
+            *)
+              tags+=("${image}:latest")
+              ;;
+          esac
+
+          {
+            echo "emby_tag=${emby_tag}"
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -38,27 +86,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
+          build-args: |
+            EMBY_TAG=${{ steps.vars.outputs.emby_tag }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.vars.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

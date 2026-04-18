@@ -1,3 +1,4 @@
+ARG EMBY_TAG=latest
 FROM golang:1.25.0-alpine AS builder
 
 WORKDIR /src
@@ -12,7 +13,8 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/strm-sync ./cmd/strm-sync
 
-FROM lscr.io/linuxserver/emby:latest
+FROM lscr.io/linuxserver/emby:${EMBY_TAG}
+ARG EMBY_TAG
 
 COPY --from=builder /out/strm-sync /usr/local/bin/strm-sync
 COPY --chmod=755 rootfs/etc/services.d/strm-sync/run /etc/services.d/strm-sync/run

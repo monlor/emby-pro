@@ -1,5 +1,7 @@
 services:
   emby-pro:
+    # Pin a followed upstream tag here for reproducible upgrades, for example:
+    # image: ghcr.io/monlor/emby-pro:4.8.11.0-ls258
     image: ghcr.io/monlor/emby-pro:latest
     container_name: emby-pro
     restart: unless-stopped
@@ -8,6 +10,8 @@ services:
       PGID: 1000
       TZ: Asia/Shanghai
       OPENLIST_BASE_URL: https://list.example.com
+      # Optional: if emby-pro reaches OpenList via LAN but clients need a public download URL.
+      # OPENLIST_PUBLIC_URL: https://list-public.example.com
       OPENLIST_USERNAME: your-openlist-user
       OPENLIST_PASSWORD: your-openlist-password
       OPENLIST_DIRECT_PLAY: "true"
