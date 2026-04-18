@@ -58,17 +58,41 @@ jobs:
           scope = urllib.parse.quote("repository:linuxserver/emby:pull", safe="")
           token_url = f"https://ghcr.io/token?service=ghcr.io&scope={scope}"
           token = fetch_json(token_url)["token"]
-          tags_payload = fetch_json(
-            "https://lscr.io/v2/linuxserver/emby/tags/list",
-            headers={"Authorization": f"Bearer {token}"},
-          )
+          headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+          }
+
+          def parse_next_url(link_header, base_url):
+            if not link_header:
+              return None
+
+            for part in link_header.split(","):
+              section = part.strip()
+              if 'rel="next"' not in section:
+                continue
+
+              url_part = section.split(";", 1)[0].strip()
+              if url_part.startswith("<") and url_part.endswith(">"):
+                return urllib.parse.urljoin(base_url, url_part[1:-1])
+
+            return None
+
+          tags = []
+          next_url = "https://lscr.io/v2/linuxserver/emby/tags/list?n=100"
+          while next_url:
+            req = urllib.request.Request(next_url, headers=headers)
+            with urllib.request.urlopen(req) as response:
+              payload = json.load(response)
+              tags.extend(payload.get("tags", []))
+              next_url = parse_next_url(response.headers.get("Link"), next_url)
 
           def sort_key(tag):
             version, ls_build = tag.split("-ls", 1)
             version_parts = tuple(int(part) for part in version.split("."))
             return version_parts + (int(ls_build),)
 
-          stable_tags = [tag for tag in tags_payload.get("tags", []) if pattern.match(tag)]
+          stable_tags = [tag for tag in tags if pattern.match(tag)]
           if not stable_tags:
             print("No stable upstream tags found", file=sys.stderr)
             sys.exit(1)
