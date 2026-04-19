@@ -1,10 +1,14 @@
 package index
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,15 +22,21 @@ type Store struct {
 }
 
 type DirRecord struct {
-	RuleName      string
-	SourcePath    string
-	ParentPath    string
-	Depth         int
-	NextScanAt    time.Time
-	LastScanAt    time.Time
-	LastSuccessAt time.Time
-	FailCount     int
-	LastError     string
+	RuleName        string
+	SourcePath      string
+	ParentPath      string
+	Depth           int
+	NextScanAt      time.Time
+	LastScanAt      time.Time
+	LastSuccessAt   time.Time
+	FailCount       int
+	LastError       string
+	UnchangedStreak int
+	LastRemoteMtime time.Time
+	LastEntryCount  int
+	CooldownUntil   time.Time
+	LastResult      string
+	RuleSeed        int64
 }
 
 type FileRecord struct {
@@ -39,9 +49,12 @@ type FileRecord struct {
 }
 
 type RuleState struct {
-	RuleName   string
-	RootPath   string
-	TargetRoot string
+	RuleName         string
+	RootPath         string
+	TargetRoot       string
+	LastFullRescanAt time.Time
+	ScheduleSeed     int64
+	CooldownUntil    time.Time
 }
 
 func Open(dbPath string) (*Store, error) {
@@ -67,6 +80,11 @@ func Open(dbPath string) (*Store, error) {
 			last_success_at INTEGER NOT NULL DEFAULT 0,
 			fail_count INTEGER NOT NULL DEFAULT 0,
 			last_error TEXT NOT NULL DEFAULT '',
+			unchanged_streak INTEGER NOT NULL DEFAULT 0,
+			last_remote_mtime INTEGER NOT NULL DEFAULT 0,
+			last_entry_count INTEGER NOT NULL DEFAULT 0,
+			cooldown_until INTEGER NOT NULL DEFAULT 0,
+			last_result TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(rule_name, source_path)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_dirs_next_scan ON dirs(next_scan_at);`,
@@ -86,7 +104,9 @@ func Open(dbPath string) (*Store, error) {
 				rule_name TEXT PRIMARY KEY,
 				root_path TEXT NOT NULL,
 				target_root TEXT NOT NULL DEFAULT '',
-				last_full_rescan_at INTEGER NOT NULL DEFAULT 0
+				last_full_rescan_at INTEGER NOT NULL DEFAULT 0,
+				schedule_seed INTEGER NOT NULL DEFAULT 0,
+				cooldown_until INTEGER NOT NULL DEFAULT 0
 			);`,
 	}
 	for _, stmt := range stmts {
@@ -99,6 +119,20 @@ func Open(dbPath string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate rule_state schema: %w", err)
 	}
+	for _, stmt := range []string{
+		`ALTER TABLE dirs ADD COLUMN unchanged_streak INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE dirs ADD COLUMN last_remote_mtime INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE dirs ADD COLUMN last_entry_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE dirs ADD COLUMN cooldown_until INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE dirs ADD COLUMN last_result TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE rule_state ADD COLUMN schedule_seed INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE rule_state ADD COLUMN cooldown_until INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate sqlite schema: %w", err)
+		}
+	}
 
 	return &Store{db: db}, nil
 }
@@ -108,6 +142,10 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) EnsureRule(rule config.Rule, now time.Time) error {
+	seed, err := randomSeed()
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -115,10 +153,13 @@ func (s *Store) EnsureRule(rule config.Rule, now time.Time) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		`INSERT INTO rule_state(rule_name, root_path, target_root, last_full_rescan_at)
-		 VALUES (?, ?, ?, 0)
-		 ON CONFLICT(rule_name) DO UPDATE SET root_path = excluded.root_path, target_root = excluded.target_root`,
-		rule.Name, rule.SourcePath, rule.TargetPath,
+		`INSERT INTO rule_state(rule_name, root_path, target_root, last_full_rescan_at, schedule_seed, cooldown_until)
+		 VALUES (?, ?, ?, 0, ?, 0)
+		 ON CONFLICT(rule_name) DO UPDATE SET
+		   root_path = excluded.root_path,
+		   target_root = excluded.target_root,
+		   schedule_seed = CASE WHEN rule_state.schedule_seed = 0 THEN excluded.schedule_seed ELSE rule_state.schedule_seed END`,
+		rule.Name, rule.SourcePath, rule.TargetPath, seed,
 	); err != nil {
 		return err
 	}
@@ -136,13 +177,21 @@ func (s *Store) EnsureRule(rule config.Rule, now time.Time) error {
 }
 
 func (s *Store) DueDirs(limit int, now time.Time) ([]DirRecord, error) {
+	candidateLimit := max(limit*4, 64)
+	if limit <= 0 {
+		candidateLimit = 64
+	}
 	rows, err := s.db.Query(
-		`SELECT rule_name, source_path, parent_path, depth, next_scan_at, last_scan_at, last_success_at, fail_count, last_error
-		   FROM dirs
-		  WHERE next_scan_at <= ?
-		  ORDER BY depth ASC, last_success_at ASC, source_path ASC
+		`SELECT d.rule_name, d.source_path, d.parent_path, d.depth, d.next_scan_at, d.last_scan_at, d.last_success_at, d.fail_count, d.last_error,
+		        d.unchanged_streak, d.last_remote_mtime, d.last_entry_count, d.cooldown_until, d.last_result, rs.schedule_seed
+		   FROM dirs d
+		   JOIN rule_state rs ON rs.rule_name = d.rule_name
+		  WHERE d.next_scan_at <= ?
+		    AND d.cooldown_until <= ?
+		    AND rs.cooldown_until <= ?
+		  ORDER BY d.next_scan_at ASC, d.depth ASC, d.last_success_at ASC, d.source_path ASC
 		  LIMIT ?`,
-		now.Unix(), limit,
+		now.Unix(), now.Unix(), now.Unix(), candidateLimit,
 	)
 	if err != nil {
 		return nil, err
@@ -152,7 +201,7 @@ func (s *Store) DueDirs(limit int, now time.Time) ([]DirRecord, error) {
 	var dirs []DirRecord
 	for rows.Next() {
 		var rec DirRecord
-		var nextScanAt, lastScanAt, lastSuccessAt int64
+		var nextScanAt, lastScanAt, lastSuccessAt, lastRemoteMtime, cooldownUntil int64
 		if err := rows.Scan(
 			&rec.RuleName,
 			&rec.SourcePath,
@@ -163,15 +212,84 @@ func (s *Store) DueDirs(limit int, now time.Time) ([]DirRecord, error) {
 			&lastSuccessAt,
 			&rec.FailCount,
 			&rec.LastError,
+			&rec.UnchangedStreak,
+			&lastRemoteMtime,
+			&rec.LastEntryCount,
+			&cooldownUntil,
+			&rec.LastResult,
+			&rec.RuleSeed,
 		); err != nil {
 			return nil, err
 		}
 		rec.NextScanAt = unixToTime(nextScanAt)
 		rec.LastScanAt = unixToTime(lastScanAt)
 		rec.LastSuccessAt = unixToTime(lastSuccessAt)
+		rec.LastRemoteMtime = unixToTime(lastRemoteMtime)
+		rec.CooldownUntil = unixToTime(cooldownUntil)
 		dirs = append(dirs, rec)
 	}
-	return dirs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sortDueDirs(dirs)
+	if limit > 0 && len(dirs) > limit {
+		dirs = dirs[:limit]
+	}
+	return dirs, nil
+}
+
+func (s *Store) NextEligibleScanAt() (time.Time, error) {
+	row := s.db.QueryRow(
+		`SELECT COALESCE(MIN(max(d.next_scan_at, d.cooldown_until, rs.cooldown_until)), 0)
+		   FROM dirs d
+		   JOIN rule_state rs ON rs.rule_name = d.rule_name`,
+	)
+	var nextAt int64
+	if err := row.Scan(&nextAt); err != nil {
+		return time.Time{}, err
+	}
+	return unixToTime(nextAt), nil
+}
+
+func (s *Store) GetDir(ruleName, sourcePath string) (DirRecord, error) {
+	row := s.db.QueryRow(
+		`SELECT d.rule_name, d.source_path, d.parent_path, d.depth, d.next_scan_at, d.last_scan_at, d.last_success_at, d.fail_count, d.last_error,
+		        d.unchanged_streak, d.last_remote_mtime, d.last_entry_count, d.cooldown_until, d.last_result, rs.schedule_seed
+		   FROM dirs d
+		   JOIN rule_state rs ON rs.rule_name = d.rule_name
+		  WHERE d.rule_name = ? AND d.source_path = ?`,
+		ruleName, sourcePath,
+	)
+
+	var rec DirRecord
+	var nextScanAt, lastScanAt, lastSuccessAt, lastRemoteMtime, cooldownUntil int64
+	if err := row.Scan(
+		&rec.RuleName,
+		&rec.SourcePath,
+		&rec.ParentPath,
+		&rec.Depth,
+		&nextScanAt,
+		&lastScanAt,
+		&lastSuccessAt,
+		&rec.FailCount,
+		&rec.LastError,
+		&rec.UnchangedStreak,
+		&lastRemoteMtime,
+		&rec.LastEntryCount,
+		&cooldownUntil,
+		&rec.LastResult,
+		&rec.RuleSeed,
+	); err != nil {
+		return DirRecord{}, err
+	}
+
+	rec.NextScanAt = unixToTime(nextScanAt)
+	rec.LastScanAt = unixToTime(lastScanAt)
+	rec.LastSuccessAt = unixToTime(lastSuccessAt)
+	rec.LastRemoteMtime = unixToTime(lastRemoteMtime)
+	rec.CooldownUntil = unixToTime(cooldownUntil)
+	return rec, nil
 }
 
 func (s *Store) UpsertDir(ruleName, sourcePath, parentPath string, depth int, nextScanAt time.Time) error {
@@ -187,22 +305,24 @@ func (s *Store) UpsertDir(ruleName, sourcePath, parentPath string, depth int, ne
 	return err
 }
 
-func (s *Store) MarkDirScannedSuccess(ruleName, sourcePath string, nextScanAt, now time.Time) error {
+func (s *Store) MarkDirScannedSuccess(ruleName, sourcePath string, nextScanAt, remoteMtime time.Time, entryCount int, lastResult string, unchangedStreak int, now time.Time) error {
 	_, err := s.db.Exec(
 		`UPDATE dirs
-		    SET next_scan_at = ?, last_scan_at = ?, last_success_at = ?, fail_count = 0, last_error = ''
+		    SET next_scan_at = ?, last_scan_at = ?, last_success_at = ?, fail_count = 0, last_error = '',
+		        unchanged_streak = ?, last_remote_mtime = ?, last_entry_count = ?, cooldown_until = 0, last_result = ?
 		  WHERE rule_name = ? AND source_path = ?`,
-		nextScanAt.Unix(), now.Unix(), now.Unix(), ruleName, sourcePath,
+		nextScanAt.Unix(), now.Unix(), now.Unix(), unchangedStreak, remoteMtime.Unix(), entryCount, lastResult, ruleName, sourcePath,
 	)
 	return err
 }
 
-func (s *Store) MarkDirScannedFailed(ruleName, sourcePath, lastError string, nextScanAt, now time.Time) error {
+func (s *Store) MarkDirScannedFailed(ruleName, sourcePath, lastError string, nextScanAt, cooldownUntil, now time.Time, lastResult string) error {
 	_, err := s.db.Exec(
 		`UPDATE dirs
-		    SET next_scan_at = ?, last_scan_at = ?, fail_count = fail_count + 1, last_error = ?
+		    SET next_scan_at = ?, last_scan_at = ?, fail_count = fail_count + 1, last_error = ?,
+		        cooldown_until = ?, last_result = ?
 		  WHERE rule_name = ? AND source_path = ?`,
-		nextScanAt.Unix(), now.Unix(), lastError, ruleName, sourcePath,
+		nextScanAt.Unix(), now.Unix(), lastError, cooldownUntil.Unix(), lastResult, ruleName, sourcePath,
 	)
 	return err
 }
@@ -337,7 +457,7 @@ func (s *Store) DeleteDirSubtree(ruleName, dirPath string) error {
 }
 
 func (s *Store) ListRuleStates() ([]RuleState, error) {
-	rows, err := s.db.Query(`SELECT rule_name, root_path, target_root FROM rule_state ORDER BY rule_name ASC`)
+	rows, err := s.db.Query(`SELECT rule_name, root_path, target_root, last_full_rescan_at, schedule_seed, cooldown_until FROM rule_state ORDER BY rule_name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -346,9 +466,12 @@ func (s *Store) ListRuleStates() ([]RuleState, error) {
 	var states []RuleState
 	for rows.Next() {
 		var state RuleState
-		if err := rows.Scan(&state.RuleName, &state.RootPath, &state.TargetRoot); err != nil {
+		var lastFullRescanAt, cooldownUntil int64
+		if err := rows.Scan(&state.RuleName, &state.RootPath, &state.TargetRoot, &lastFullRescanAt, &state.ScheduleSeed, &cooldownUntil); err != nil {
 			return nil, err
 		}
+		state.LastFullRescanAt = unixToTime(lastFullRescanAt)
+		state.CooldownUntil = unixToTime(cooldownUntil)
 		states = append(states, state)
 	}
 	return states, rows.Err()
@@ -420,10 +543,65 @@ func (s *Store) ScheduleFullRescan(ruleName string, now time.Time) error {
 	if _, err := tx.Exec(`UPDATE rule_state SET last_full_rescan_at = ? WHERE rule_name = ?`, now.Unix(), ruleName); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE dirs SET next_scan_at = MIN(next_scan_at, ?) WHERE rule_name = ?`, now.Unix(), ruleName); err != nil {
+	if _, err := tx.Exec(
+		`UPDATE dirs
+		    SET next_scan_at = MIN(next_scan_at, ?)
+		  WHERE rule_name = ?
+		    AND source_path = (SELECT root_path FROM rule_state WHERE rule_name = ?)`,
+		now.Unix(), ruleName, ruleName,
+	); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) SetRuleCooldown(ruleName string, cooldownUntil time.Time) error {
+	_, err := s.db.Exec(`UPDATE rule_state SET cooldown_until = ? WHERE rule_name = ?`, cooldownUntil.Unix(), ruleName)
+	return err
+}
+
+func sortDueDirs(dirs []DirRecord) {
+	sort.SliceStable(dirs, func(i, j int) bool {
+		if !dirs[i].NextScanAt.Equal(dirs[j].NextScanAt) {
+			return dirs[i].NextScanAt.Before(dirs[j].NextScanAt)
+		}
+		if dirs[i].Depth != dirs[j].Depth {
+			return dirs[i].Depth < dirs[j].Depth
+		}
+		if !dirs[i].LastSuccessAt.Equal(dirs[j].LastSuccessAt) {
+			return dirs[i].LastSuccessAt.Before(dirs[j].LastSuccessAt)
+		}
+		left := dueOrderKey(dirs[i].RuleSeed, dirs[i].RuleName, dirs[i].SourcePath)
+		right := dueOrderKey(dirs[j].RuleSeed, dirs[j].RuleName, dirs[j].SourcePath)
+		if left != right {
+			return left < right
+		}
+		return dirs[i].SourcePath < dirs[j].SourcePath
+	})
+}
+
+func dueOrderKey(seed int64, ruleName, sourcePath string) uint64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(ruleName))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write([]byte(sourcePath))
+	_, _ = hasher.Write([]byte{0})
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(seed))
+	_, _ = hasher.Write(buf[:])
+	return hasher.Sum64()
+}
+
+func randomSeed() (int64, error) {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return 0, err
+	}
+	seed := int64(binary.LittleEndian.Uint64(buf[:]))
+	if seed == 0 {
+		seed = time.Now().UnixNano()
+	}
+	return seed, nil
 }
 
 func unixToTime(value int64) time.Time {

@@ -1,8 +1,15 @@
 package openlist
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
+
+	"github.com/monlor/emby-pro/internal/config"
 )
 
 func TestDownloadURL(t *testing.T) {
@@ -34,5 +41,53 @@ func TestDownloadURLUsesPublicURLWhenConfigured(t *testing.T) {
 	want := "https://list.example.com/share/d/movies/%E7%94%B5%E5%BD%B1.mkv?sign=abc"
 	if got != want {
 		t.Fatalf("DownloadURL() = %s, want %s", got, want)
+	}
+}
+
+func TestListPageAppliesRateLimit(t *testing.T) {
+	var callTimes []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callTimes = append(callTimes, time.Now())
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "success",
+			"data": map[string]any{
+				"total":   0,
+				"content": []map[string]any{},
+			},
+		}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.OpenListConfig{
+		BaseURL:        server.URL,
+		Token:          "token",
+		RequestTimeout: 2 * time.Second,
+		Retry:          1,
+		RetryBackoff:   time.Millisecond,
+		ListPerPage:    200,
+		RateLimitQPS:   5,
+		RateLimitBurst: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if _, err := client.ListPage(ctx, "/media", 1, 200); err != nil {
+		t.Fatalf("first ListPage() error = %v", err)
+	}
+	if _, err := client.ListPage(ctx, "/media", 2, 200); err != nil {
+		t.Fatalf("second ListPage() error = %v", err)
+	}
+
+	if len(callTimes) != 2 {
+		t.Fatalf("expected 2 calls, got %d", len(callTimes))
+	}
+	if delta := callTimes[1].Sub(callTimes[0]); delta < 150*time.Millisecond {
+		t.Fatalf("expected rate limiter to delay second request, got %s", delta)
 	}
 }

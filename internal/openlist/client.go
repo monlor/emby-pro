@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/monlor/emby-pro/internal/config"
+	"golang.org/x/time/rate"
 )
 
 type Client struct {
@@ -27,6 +28,7 @@ type Client struct {
 	password     string
 	retry        int
 	retryBackoff time.Duration
+	limiter      *rate.Limiter
 
 	mu    sync.Mutex
 	token string
@@ -75,6 +77,10 @@ func NewClient(cfg config.OpenListConfig) (*Client, error) {
 		},
 		ForceAttemptHTTP2: !cfg.DisableHTTP2,
 	}
+	var limiter *rate.Limiter
+	if cfg.RateLimitQPS > 0 {
+		limiter = rate.NewLimiter(rate.Limit(cfg.RateLimitQPS), max(1, cfg.RateLimitBurst))
+	}
 	return &Client{
 		baseURL:   baseURL,
 		publicURL: publicURL,
@@ -86,6 +92,7 @@ func NewClient(cfg config.OpenListConfig) (*Client, error) {
 		password:     cfg.Password,
 		retry:        max(1, cfg.Retry),
 		retryBackoff: cfg.RetryBackoff,
+		limiter:      limiter,
 		token:        cfg.Token,
 	}, nil
 }
@@ -193,6 +200,11 @@ func (c *Client) requestJSON(ctx context.Context, method, uri string, payload an
 }
 
 func (c *Client) doRequest(ctx context.Context, method, uri string, body []byte, out any, allowRelogin bool) error {
+	if c.limiter != nil {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("wait rate limit: %w", err)
+		}
+	}
 	if err := c.ensureToken(ctx); err != nil {
 		return err
 	}

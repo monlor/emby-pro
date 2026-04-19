@@ -18,6 +18,33 @@ import (
 	"github.com/monlor/emby-pro/internal/openlist"
 )
 
+func testSyncConfig(tempDir string) config.SyncConfig {
+	return config.SyncConfig{
+		BaseDir:             filepath.Join(tempDir, "strm"),
+		RuleFile:            filepath.Join(tempDir, "none.yml"),
+		IndexDB:             filepath.Join(tempDir, "index.db"),
+		FullRescanInterval:  time.Hour,
+		MaxDirsPerCycle:     10,
+		MaxRequestsPerCycle: 20,
+		VideoExts: map[string]struct{}{
+			".mp4": {},
+		},
+		CleanRemoved:      true,
+		Overwrite:         true,
+		LogLevel:          "debug",
+		HotInterval:       time.Millisecond,
+		WarmInterval:      2 * time.Millisecond,
+		ColdInterval:      4 * time.Millisecond,
+		HotJitter:         0,
+		WarmJitter:        0,
+		ColdJitter:        0,
+		UnchangedToWarm:   1,
+		UnchangedToCold:   2,
+		FailureBackoffMax: time.Hour,
+		RuleCooldown:      time.Minute,
+	}
+}
+
 func TestRunOnceScansNewChildDirsInSameCycle(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -101,21 +128,7 @@ func TestRunOnceScansNewChildDirsInSameCycle(t *testing.T) {
 			PlayTicketSecret: "test-secret",
 			PlayTicketTTL:    12 * time.Hour,
 		},
-		Sync: config.SyncConfig{
-			BaseDir:             filepath.Join(tempDir, "strm"),
-			RuleFile:            filepath.Join(tempDir, "none.yml"),
-			IndexDB:             filepath.Join(tempDir, "index.db"),
-			ScanInterval:        time.Millisecond,
-			FullRescanInterval:  time.Hour,
-			MaxDirsPerCycle:     10,
-			MaxRequestsPerCycle: 20,
-			VideoExts: map[string]struct{}{
-				".mp4": {},
-			},
-			CleanRemoved: true,
-			Overwrite:    true,
-			LogLevel:     "debug",
-		},
+		Sync: testSyncConfig(tempDir),
 		Rules: []config.Rule{
 			{
 				Name:       "media",
@@ -215,22 +228,11 @@ func TestRunOnceSkipsFilesSmallerThanMinFileSize(t *testing.T) {
 			PlayTicketSecret: "test-secret",
 			PlayTicketTTL:    12 * time.Hour,
 		},
-		Sync: config.SyncConfig{
-			BaseDir:             filepath.Join(tempDir, "strm"),
-			RuleFile:            filepath.Join(tempDir, "none.yml"),
-			IndexDB:             filepath.Join(tempDir, "index.db"),
-			ScanInterval:        time.Millisecond,
-			FullRescanInterval:  time.Hour,
-			MaxDirsPerCycle:     10,
-			MaxRequestsPerCycle: 20,
-			MinFileSize:         200,
-			VideoExts: map[string]struct{}{
-				".mp4": {},
-			},
-			CleanRemoved: true,
-			Overwrite:    true,
-			LogLevel:     "debug",
-		},
+		Sync: func() config.SyncConfig {
+			cfg := testSyncConfig(tempDir)
+			cfg.MinFileSize = 200
+			return cfg
+		}(),
 		Rules: []config.Rule{
 			{
 				Name:       "media",
@@ -329,21 +331,7 @@ func TestRunOnceWritesMappedPublicSTRMPath(t *testing.T) {
 			PlayTicketSecret: "test-secret",
 			PlayTicketTTL:    12 * time.Hour,
 		},
-		Sync: config.SyncConfig{
-			BaseDir:             filepath.Join(tempDir, "strm"),
-			RuleFile:            filepath.Join(tempDir, "none.yml"),
-			IndexDB:             filepath.Join(tempDir, "index.db"),
-			ScanInterval:        time.Millisecond,
-			FullRescanInterval:  time.Hour,
-			MaxDirsPerCycle:     10,
-			MaxRequestsPerCycle: 20,
-			VideoExts: map[string]struct{}{
-				".mp4": {},
-			},
-			CleanRemoved: true,
-			Overwrite:    true,
-			LogLevel:     "debug",
-		},
+		Sync: testSyncConfig(tempDir),
 		Rules: []config.Rule{
 			{
 				Name:       "115pan-cookie",
@@ -480,21 +468,7 @@ func TestRunOnceDoesNotResolvePlayURLDuringSync(t *testing.T) {
 			PlayTicketSecret: "test-secret",
 			PlayTicketTTL:    12 * time.Hour,
 		},
-		Sync: config.SyncConfig{
-			BaseDir:             filepath.Join(tempDir, "strm"),
-			RuleFile:            filepath.Join(tempDir, "none.yml"),
-			IndexDB:             filepath.Join(tempDir, "index.db"),
-			ScanInterval:        time.Millisecond,
-			FullRescanInterval:  time.Hour,
-			MaxDirsPerCycle:     10,
-			MaxRequestsPerCycle: 20,
-			VideoExts: map[string]struct{}{
-				".mp4": {},
-			},
-			CleanRemoved: true,
-			Overwrite:    true,
-			LogLevel:     "debug",
-		},
+		Sync: testSyncConfig(tempDir),
 		Rules: []config.Rule{
 			{
 				Name:       "media",
@@ -593,21 +567,7 @@ func TestRunOnceAdoptsExistingSTRMWhenIndexIsMissing(t *testing.T) {
 			PlayTicketSecret: "test-secret",
 			PlayTicketTTL:    12 * time.Hour,
 		},
-		Sync: config.SyncConfig{
-			BaseDir:             filepath.Join(tempDir, "strm"),
-			RuleFile:            filepath.Join(tempDir, "none.yml"),
-			IndexDB:             filepath.Join(tempDir, "index.db"),
-			ScanInterval:        time.Millisecond,
-			FullRescanInterval:  time.Hour,
-			MaxDirsPerCycle:     10,
-			MaxRequestsPerCycle: 20,
-			VideoExts: map[string]struct{}{
-				".mp4": {},
-			},
-			CleanRemoved: true,
-			Overwrite:    true,
-			LogLevel:     "debug",
-		},
+		Sync: testSyncConfig(tempDir),
 		Rules: []config.Rule{
 			{
 				Name:       "media",
@@ -718,21 +678,11 @@ func TestRunOnceSkipsUnchangedTrackedFileWhenOverwriteDisabled(t *testing.T) {
 			PlayTicketSecret: "test-secret",
 			PlayTicketTTL:    12 * time.Hour,
 		},
-		Sync: config.SyncConfig{
-			BaseDir:             filepath.Join(tempDir, "strm"),
-			RuleFile:            filepath.Join(tempDir, "none.yml"),
-			IndexDB:             filepath.Join(tempDir, "index.db"),
-			ScanInterval:        time.Millisecond,
-			FullRescanInterval:  time.Hour,
-			MaxDirsPerCycle:     10,
-			MaxRequestsPerCycle: 20,
-			VideoExts: map[string]struct{}{
-				".mp4": {},
-			},
-			CleanRemoved: true,
-			Overwrite:    false,
-			LogLevel:     "debug",
-		},
+		Sync: func() config.SyncConfig {
+			cfg := testSyncConfig(tempDir)
+			cfg.Overwrite = false
+			return cfg
+		}(),
 		Rules: []config.Rule{
 			{
 				Name:       "media",
@@ -836,21 +786,7 @@ func TestRunOnceForceRewritesTrackedFileWhenOverwriteEnabled(t *testing.T) {
 			PlayTicketSecret: "test-secret",
 			PlayTicketTTL:    12 * time.Hour,
 		},
-		Sync: config.SyncConfig{
-			BaseDir:             filepath.Join(tempDir, "strm"),
-			RuleFile:            filepath.Join(tempDir, "none.yml"),
-			IndexDB:             filepath.Join(tempDir, "index.db"),
-			ScanInterval:        time.Millisecond,
-			FullRescanInterval:  time.Hour,
-			MaxDirsPerCycle:     10,
-			MaxRequestsPerCycle: 20,
-			VideoExts: map[string]struct{}{
-				".mp4": {},
-			},
-			CleanRemoved: true,
-			Overwrite:    true,
-			LogLevel:     "debug",
-		},
+		Sync: testSyncConfig(tempDir),
 		Rules: []config.Rule{
 			{
 				Name:       "media",

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,6 +20,8 @@ import (
 	"github.com/monlor/emby-pro/internal/redirect"
 )
 
+const minRunSleep = time.Second
+
 type Syncer struct {
 	cfg    config.Config
 	store  *index.Store
@@ -26,6 +29,7 @@ type Syncer struct {
 	logger *log.Logger
 	rules  map[string]config.Rule
 	redir  *redirect.Builder
+	rng    *rand.Rand
 }
 
 type fileWrite struct {
@@ -50,6 +54,7 @@ func New(cfg config.Config, store *index.Store, client *openlist.Client) *Syncer
 		logger: log.New(os.Stdout, "[emby-pro] ", log.LstdFlags),
 		rules:  rules,
 		redir:  redirect.NewBuilder(cfg.Redirect),
+		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -58,21 +63,22 @@ func (s *Syncer) Run(ctx context.Context) error {
 		return err
 	}
 
-	if err := s.runCycle(ctx); err != nil {
-		s.warnf("initial cycle failed: %v", err)
-	}
-
-	ticker := time.NewTicker(s.cfg.Sync.ScanInterval)
-	defer ticker.Stop()
-
 	for {
+		if err := s.runCycle(ctx); err != nil {
+			s.warnf("sync cycle failed: %v", err)
+		}
+
+		sleepFor, err := s.nextRunSleep(time.Now())
+		if err != nil {
+			return err
+		}
+
+		timer := time.NewTimer(sleepFor)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return nil
-		case <-ticker.C:
-			if err := s.runCycle(ctx); err != nil {
-				s.warnf("sync cycle failed: %v", err)
-			}
+		case <-timer.C:
 		}
 	}
 }
@@ -82,6 +88,49 @@ func (s *Syncer) RunOnce(ctx context.Context) error {
 		return err
 	}
 	return s.runCycle(ctx)
+}
+
+func (s *Syncer) nextRunSleep(now time.Time) (time.Duration, error) {
+	nextWakeAt, err := s.nextWakeAt(now)
+	if err != nil {
+		return 0, err
+	}
+	if nextWakeAt.IsZero() || !nextWakeAt.After(now) {
+		return minRunSleep, nil
+	}
+	sleepFor := nextWakeAt.Sub(now)
+	if sleepFor < minRunSleep {
+		return minRunSleep, nil
+	}
+	return sleepFor, nil
+}
+
+func (s *Syncer) nextWakeAt(now time.Time) (time.Time, error) {
+	nextAt := time.Time{}
+
+	nextEligibleScanAt, err := s.store.NextEligibleScanAt()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("load next eligible scan: %w", err)
+	}
+	if !nextEligibleScanAt.IsZero() {
+		nextAt = nextEligibleScanAt
+	}
+
+	states, err := s.store.ListRuleStates()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("load rule states: %w", err)
+	}
+	for _, state := range states {
+		rescanAt := state.LastFullRescanAt.Add(s.cfg.Sync.FullRescanInterval)
+		if state.LastFullRescanAt.IsZero() {
+			rescanAt = now
+		}
+		if nextAt.IsZero() || rescanAt.Before(nextAt) {
+			nextAt = rescanAt
+		}
+	}
+
+	return nextAt, nil
 }
 
 func (s *Syncer) bootstrap() error {
@@ -176,8 +225,15 @@ func (s *Syncer) scanDir(ctx context.Context, rule config.Rule, dir index.DirRec
 	now := time.Now()
 	entries, err := s.fetchEntries(ctx, dir.SourcePath, requestBudget)
 	if err != nil {
-		nextRetry := now.Add(s.cfg.Sync.ScanInterval)
-		if markErr := s.store.MarkDirScannedFailed(rule.Name, dir.SourcePath, err.Error(), nextRetry, now); markErr != nil {
+		nextRetry, cooldownUntil, result := s.nextFailureSchedule(dir, now, err)
+		if isWindControlError(err) {
+			if cooldownErr := s.store.SetRuleCooldown(rule.Name, cooldownUntil); cooldownErr != nil {
+				s.warnf("set rule cooldown failed rule=%s err=%v", rule.Name, cooldownErr)
+			} else {
+				s.warnf("rule cooldown activated rule=%s until=%s reason=%v", rule.Name, cooldownUntil.Format(time.RFC3339), err)
+			}
+		}
+		if markErr := s.store.MarkDirScannedFailed(rule.Name, dir.SourcePath, err.Error(), nextRetry, cooldownUntil, now, result); markErr != nil {
 			s.warnf("mark dir failed rule=%s dir=%s err=%v", rule.Name, dir.SourcePath, markErr)
 		}
 		return err
@@ -240,6 +296,7 @@ func (s *Syncer) scanDir(ctx context.Context, rule config.Rule, dir index.DirRec
 	for _, write := range writes {
 		seenFiles[write.sourcePath] = struct{}{}
 	}
+	scheduleChanged := hasScheduleChange(existingFiles, existingDirs, writes, seenDirs)
 
 	existingFileMap := make(map[string]index.FileRecord, len(existingFiles))
 	for _, file := range existingFiles {
@@ -318,7 +375,9 @@ func (s *Syncer) scanDir(ctx context.Context, rule config.Rule, dir index.DirRec
 		}
 	}
 
-	if err := s.store.MarkDirScannedSuccess(rule.Name, dir.SourcePath, now.Add(s.cfg.Sync.ScanInterval), now); err != nil {
+	listingState := summarizeEntries(entries)
+	nextScanAt, unchangedStreak, result := s.nextSuccessSchedule(dir, scheduleChanged, now)
+	if err := s.store.MarkDirScannedSuccess(rule.Name, dir.SourcePath, nextScanAt, listingState.latestModified, listingState.entryCount, result, unchangedStreak, now); err != nil {
 		return fmt.Errorf("mark dir success: %w", err)
 	}
 

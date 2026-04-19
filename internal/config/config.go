@@ -30,6 +30,24 @@ const (
 	defaultMinFileSize         = 15 * 1024 * 1024
 )
 
+type syncProfilePreset struct {
+	RateLimitQPS        float64
+	RateLimitBurst      int
+	FullRescanInterval  time.Duration
+	MaxDirsPerCycle     int
+	MaxRequestsPerCycle int
+	HotInterval         time.Duration
+	WarmInterval        time.Duration
+	ColdInterval        time.Duration
+	HotJitter           time.Duration
+	WarmJitter          time.Duration
+	ColdJitter          time.Duration
+	UnchangedToWarm     int
+	UnchangedToCold     int
+	FailureBackoffMax   time.Duration
+	RuleCooldown        time.Duration
+}
+
 type Config struct {
 	OpenList OpenListConfig
 	Emby     EmbyConfig
@@ -53,6 +71,8 @@ type OpenListConfig struct {
 	Retry              int
 	RetryBackoff       time.Duration
 	ListPerPage        int
+	RateLimitQPS       float64
+	RateLimitBurst     int
 	InsecureSkipVerify bool
 	DisableHTTP2       bool
 }
@@ -61,7 +81,6 @@ type SyncConfig struct {
 	BaseDir             string
 	RuleFile            string
 	IndexDB             string
-	ScanInterval        time.Duration
 	FullRescanInterval  time.Duration
 	MaxDirsPerCycle     int
 	MaxRequestsPerCycle int
@@ -70,6 +89,16 @@ type SyncConfig struct {
 	CleanRemoved        bool
 	Overwrite           bool
 	LogLevel            string
+	HotInterval         time.Duration
+	WarmInterval        time.Duration
+	ColdInterval        time.Duration
+	HotJitter           time.Duration
+	WarmJitter          time.Duration
+	ColdJitter          time.Duration
+	UnchangedToWarm     int
+	UnchangedToCold     int
+	FailureBackoffMax   time.Duration
+	RuleCooldown        time.Duration
 }
 
 type EmbyConfig struct {
@@ -120,6 +149,11 @@ type ruleDefaults struct {
 }
 
 func Load() (Config, error) {
+	profilePreset, err := loadSyncProfilePreset()
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		OpenList: OpenListConfig{
 			BaseURL:            strings.TrimSpace(os.Getenv("OPENLIST_BASE_URL")),
@@ -131,13 +165,15 @@ func Load() (Config, error) {
 			Retry:              getenvInt("OPENLIST_RETRY", 3),
 			RetryBackoff:       getenvDuration("OPENLIST_RETRY_BACKOFF", 2*time.Second),
 			ListPerPage:        getenvInt("OPENLIST_LIST_PER_PAGE", 200),
+			RateLimitQPS:       getenvFloat("OPENLIST_RATE_LIMIT_QPS", profilePreset.RateLimitQPS),
+			RateLimitBurst:     getenvInt("OPENLIST_RATE_LIMIT_BURST", profilePreset.RateLimitBurst),
 			InsecureSkipVerify: getenvBool("OPENLIST_INSECURE_SKIP_VERIFY", false),
 			DisableHTTP2:       getenvBool("OPENLIST_DISABLE_HTTP2", false),
 		},
 		Emby: EmbyConfig{
 			BaseURL:        strings.TrimSpace(getenvString("EMBY_BASE_URL", defaultEmbyBaseURL)),
 			ValidatePath:   defaultEmbyValidatePath,
-			RequestTimeout: getenvDuration("EMBY_REQUEST_TIMEOUT", 10*time.Second),
+			RequestTimeout: getenvDuration("EMBY_REQUEST_TIMEOUT", 15*time.Second),
 			TokenCacheTTL:  getenvDuration("EMBY_TOKEN_CACHE_TTL", 30*time.Second),
 		},
 		Redirect: RedirectConfig{
@@ -155,15 +191,24 @@ func Load() (Config, error) {
 			BaseDir:             strings.TrimSpace(getenvString("STRM_BASE_DIR", defaultBaseDir)),
 			RuleFile:            strings.TrimSpace(getenvString("STRM_RULES_FILE", defaultRuleFile)),
 			IndexDB:             strings.TrimSpace(getenvString("STRM_INDEX_DB", defaultIndexDB)),
-			ScanInterval:        getenvDuration("STRM_SCAN_INTERVAL", 5*time.Minute),
-			FullRescanInterval:  getenvDuration("STRM_FULL_RESCAN_INTERVAL", 24*time.Hour),
-			MaxDirsPerCycle:     getenvInt("STRM_MAX_DIRS_PER_CYCLE", 200),
-			MaxRequestsPerCycle: getenvInt("STRM_MAX_REQUESTS_PER_CYCLE", 1000),
+			FullRescanInterval:  getenvDuration("STRM_FULL_RESCAN_INTERVAL", profilePreset.FullRescanInterval),
+			MaxDirsPerCycle:     getenvInt("STRM_MAX_DIRS_PER_CYCLE", profilePreset.MaxDirsPerCycle),
+			MaxRequestsPerCycle: getenvInt("STRM_MAX_REQUESTS_PER_CYCLE", profilePreset.MaxRequestsPerCycle),
 			MinFileSize:         defaultMinFileSize,
 			VideoExts:           parseExtSet(getenvString("STRM_VIDEO_EXTS", ".mp4,.mkv,.avi,.ts,.mov,.wmv,.flv,.mpg")),
 			CleanRemoved:        getenvBool("STRM_CLEAN_REMOVED", true),
 			Overwrite:           getenvBool("STRM_OVERWRITE", true),
 			LogLevel:            strings.ToLower(getenvString("STRM_LOG_LEVEL", "info")),
+			HotInterval:         getenvDuration("STRM_HOT_INTERVAL", profilePreset.HotInterval),
+			WarmInterval:        getenvDuration("STRM_WARM_INTERVAL", profilePreset.WarmInterval),
+			ColdInterval:        getenvDuration("STRM_COLD_INTERVAL", profilePreset.ColdInterval),
+			HotJitter:           getenvDuration("STRM_HOT_JITTER", profilePreset.HotJitter),
+			WarmJitter:          getenvDuration("STRM_WARM_JITTER", profilePreset.WarmJitter),
+			ColdJitter:          getenvDuration("STRM_COLD_JITTER", profilePreset.ColdJitter),
+			UnchangedToWarm:     getenvInt("STRM_UNCHANGED_TO_WARM", profilePreset.UnchangedToWarm),
+			UnchangedToCold:     getenvInt("STRM_UNCHANGED_TO_COLD", profilePreset.UnchangedToCold),
+			FailureBackoffMax:   getenvDuration("STRM_FAILURE_BACKOFF_MAX", profilePreset.FailureBackoffMax),
+			RuleCooldown:        getenvDuration("STRM_RULE_COOLDOWN", profilePreset.RuleCooldown),
 		},
 	}
 
@@ -183,11 +228,20 @@ func Load() (Config, error) {
 	if isEnvSet("REDIRECT_TARGET_MODE") {
 		return Config{}, errors.New("REDIRECT_TARGET_MODE has been removed: emby-pro now always resolves OpenList download routes at playback time")
 	}
+	if isEnvSet("STRM_SCAN_INTERVAL") {
+		return Config{}, errors.New("STRM_SCAN_INTERVAL has been removed: emby-pro now always uses adaptive directory scheduling")
+	}
 	if cfg.OpenList.Token == "" && (cfg.OpenList.Username == "" || cfg.OpenList.Password == "") {
 		return Config{}, errors.New("OPENLIST_TOKEN or OPENLIST_USERNAME/OPENLIST_PASSWORD is required")
 	}
 	if cfg.Sync.BaseDir == "" {
 		cfg.Sync.BaseDir = defaultBaseDir
+	}
+	if cfg.OpenList.RateLimitQPS < 0 {
+		return Config{}, errors.New("OPENLIST_RATE_LIMIT_QPS must be greater than or equal to zero")
+	}
+	if cfg.OpenList.RateLimitBurst <= 0 {
+		cfg.OpenList.RateLimitBurst = 1
 	}
 	if !filepath.IsAbs(cfg.Sync.BaseDir) {
 		cfg.Sync.BaseDir = filepath.Clean(filepath.Join(string(os.PathSeparator), cfg.Sync.BaseDir))
@@ -256,6 +310,24 @@ func Load() (Config, error) {
 	}
 	if cfg.Redirect.PlayTicketTTL <= 0 {
 		return Config{}, errors.New("PLAY_TICKET_TTL must be greater than zero")
+	}
+	if cfg.Sync.FullRescanInterval <= 0 {
+		return Config{}, errors.New("STRM_FULL_RESCAN_INTERVAL must be greater than zero")
+	}
+	if cfg.Sync.HotInterval <= 0 || cfg.Sync.WarmInterval <= 0 || cfg.Sync.ColdInterval <= 0 {
+		return Config{}, errors.New("adaptive sync intervals must be greater than zero")
+	}
+	if cfg.Sync.HotJitter < 0 || cfg.Sync.WarmJitter < 0 || cfg.Sync.ColdJitter < 0 {
+		return Config{}, errors.New("adaptive sync jitter must be greater than or equal to zero")
+	}
+	if cfg.Sync.UnchangedToWarm <= 0 || cfg.Sync.UnchangedToCold < cfg.Sync.UnchangedToWarm {
+		return Config{}, errors.New("adaptive sync unchanged thresholds are invalid")
+	}
+	if cfg.Sync.FailureBackoffMax <= 0 {
+		return Config{}, errors.New("STRM_FAILURE_BACKOFF_MAX must be greater than zero")
+	}
+	if cfg.Sync.RuleCooldown <= 0 {
+		return Config{}, errors.New("STRM_RULE_COOLDOWN must be greater than zero")
 	}
 
 	return cfg, nil
@@ -567,6 +639,18 @@ func getenvInt(key string, fallback int) int {
 	return parsed
 }
 
+func getenvFloat(key string, fallback float64) float64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
 func getenvDuration(key string, fallback time.Duration) time.Duration {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -675,6 +759,86 @@ func boolPtr(value bool) *bool {
 func isEnvSet(key string) bool {
 	_, ok := os.LookupEnv(key)
 	return ok
+}
+
+func loadSyncProfilePreset() (syncProfilePreset, error) {
+	profile := strings.ToLower(strings.TrimSpace(os.Getenv("STRM_SYNC_PROFILE")))
+	switch profile {
+	case "":
+		return syncProfilePreset{
+			RateLimitQPS:        0,
+			RateLimitBurst:      1,
+			FullRescanInterval:  24 * time.Hour,
+			MaxDirsPerCycle:     200,
+			MaxRequestsPerCycle: 1000,
+			HotInterval:         30 * time.Minute,
+			WarmInterval:        6 * time.Hour,
+			ColdInterval:        24 * time.Hour,
+			HotJitter:           10 * time.Minute,
+			WarmJitter:          time.Hour,
+			ColdJitter:          4 * time.Hour,
+			UnchangedToWarm:     3,
+			UnchangedToCold:     7,
+			FailureBackoffMax:   24 * time.Hour,
+			RuleCooldown:        6 * time.Hour,
+		}, nil
+	case "conservative":
+		return syncProfilePreset{
+			RateLimitQPS:        0.2,
+			RateLimitBurst:      1,
+			FullRescanInterval:  168 * time.Hour,
+			MaxDirsPerCycle:     20,
+			MaxRequestsPerCycle: 60,
+			HotInterval:         30 * time.Minute,
+			WarmInterval:        6 * time.Hour,
+			ColdInterval:        24 * time.Hour,
+			HotJitter:           10 * time.Minute,
+			WarmJitter:          time.Hour,
+			ColdJitter:          4 * time.Hour,
+			UnchangedToWarm:     3,
+			UnchangedToCold:     7,
+			FailureBackoffMax:   24 * time.Hour,
+			RuleCooldown:        6 * time.Hour,
+		}, nil
+	case "balanced":
+		return syncProfilePreset{
+			RateLimitQPS:        0.5,
+			RateLimitBurst:      1,
+			FullRescanInterval:  72 * time.Hour,
+			MaxDirsPerCycle:     50,
+			MaxRequestsPerCycle: 150,
+			HotInterval:         20 * time.Minute,
+			WarmInterval:        4 * time.Hour,
+			ColdInterval:        12 * time.Hour,
+			HotJitter:           5 * time.Minute,
+			WarmJitter:          30 * time.Minute,
+			ColdJitter:          2 * time.Hour,
+			UnchangedToWarm:     3,
+			UnchangedToCold:     6,
+			FailureBackoffMax:   12 * time.Hour,
+			RuleCooldown:        4 * time.Hour,
+		}, nil
+	case "aggressive":
+		return syncProfilePreset{
+			RateLimitQPS:        1,
+			RateLimitBurst:      2,
+			FullRescanInterval:  24 * time.Hour,
+			MaxDirsPerCycle:     100,
+			MaxRequestsPerCycle: 300,
+			HotInterval:         10 * time.Minute,
+			WarmInterval:        2 * time.Hour,
+			ColdInterval:        6 * time.Hour,
+			HotJitter:           2 * time.Minute,
+			WarmJitter:          15 * time.Minute,
+			ColdJitter:          time.Hour,
+			UnchangedToWarm:     2,
+			UnchangedToCold:     5,
+			FailureBackoffMax:   6 * time.Hour,
+			RuleCooldown:        2 * time.Hour,
+		}, nil
+	default:
+		return syncProfilePreset{}, fmt.Errorf("invalid STRM_SYNC_PROFILE %q: expected conservative, balanced, or aggressive", profile)
+	}
 }
 
 func randomSecret(size int) (string, error) {

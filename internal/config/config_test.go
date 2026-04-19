@@ -52,6 +52,9 @@ func TestBuildEnvRulesDefaultTarget(t *testing.T) {
 	if got, want := cfg.Emby.BaseURL, defaultEmbyBaseURL; got != want {
 		t.Fatalf("emby base url = %s, want %s", got, want)
 	}
+	if got, want := cfg.Emby.RequestTimeout, 15*time.Second; got != want {
+		t.Fatalf("emby request timeout = %s, want %s", got, want)
+	}
 }
 
 func TestCompileOptionalPattern(t *testing.T) {
@@ -228,6 +231,126 @@ func TestLoadSupportsPathMappings(t *testing.T) {
 	}
 	if got, want := cfg.Rules[0].SourcePath, "/115pan_cookie"; got != want {
 		t.Fatalf("rule source path = %s, want %s", got, want)
+	}
+}
+
+func TestLoadSupportsAdaptiveSyncAndRateLimitConfig(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("OPENLIST_RATE_LIMIT_QPS", "0.2")
+	t.Setenv("OPENLIST_RATE_LIMIT_BURST", "1")
+	t.Setenv("STRM_HOT_INTERVAL", "30m")
+	t.Setenv("STRM_WARM_INTERVAL", "6h")
+	t.Setenv("STRM_COLD_INTERVAL", "24h")
+	t.Setenv("STRM_HOT_JITTER", "10m")
+	t.Setenv("STRM_WARM_JITTER", "1h")
+	t.Setenv("STRM_COLD_JITTER", "4h")
+	t.Setenv("STRM_UNCHANGED_TO_WARM", "3")
+	t.Setenv("STRM_UNCHANGED_TO_COLD", "7")
+	t.Setenv("STRM_FAILURE_BACKOFF_MAX", "24h")
+	t.Setenv("STRM_RULE_COOLDOWN", "6h")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got, want := cfg.OpenList.RateLimitQPS, 0.2; got != want {
+		t.Fatalf("rate limit qps = %v, want %v", got, want)
+	}
+	if got, want := cfg.Sync.WarmInterval, 6*time.Hour; got != want {
+		t.Fatalf("warm interval = %s, want %s", got, want)
+	}
+	if got, want := cfg.Sync.RuleCooldown, 6*time.Hour; got != want {
+		t.Fatalf("rule cooldown = %s, want %s", got, want)
+	}
+}
+
+func TestLoadSupportsSyncProfilePreset(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_SYNC_PROFILE", "conservative")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got, want := cfg.OpenList.RateLimitQPS, 0.2; got != want {
+		t.Fatalf("rate limit qps = %v, want %v", got, want)
+	}
+	if got, want := cfg.Sync.MaxDirsPerCycle, 20; got != want {
+		t.Fatalf("max dirs per cycle = %d, want %d", got, want)
+	}
+	if got, want := cfg.Sync.MaxRequestsPerCycle, 60; got != want {
+		t.Fatalf("max requests per cycle = %d, want %d", got, want)
+	}
+}
+
+func TestLoadAllowsExplicitOverridesOnTopOfSyncProfile(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_SYNC_PROFILE", "conservative")
+	t.Setenv("STRM_MAX_DIRS_PER_CYCLE", "35")
+	t.Setenv("OPENLIST_RATE_LIMIT_QPS", "0.4")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got, want := cfg.Sync.MaxDirsPerCycle, 35; got != want {
+		t.Fatalf("max dirs per cycle = %d, want %d", got, want)
+	}
+	if got, want := cfg.OpenList.RateLimitQPS, 0.4; got != want {
+		t.Fatalf("rate limit qps = %v, want %v", got, want)
+	}
+	if got, want := cfg.Sync.MaxRequestsPerCycle, 60; got != want {
+		t.Fatalf("max requests per cycle = %d, want %d", got, want)
+	}
+}
+
+func TestLoadRejectsInvalidSyncProfile(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_SYNC_PROFILE", "fast-and-loose")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "STRM_SYNC_PROFILE") {
+		t.Fatalf("expected STRM_SYNC_PROFILE error, got %v", err)
+	}
+}
+
+func TestLoadRejectsRemovedScanIntervalEnv(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_SCAN_INTERVAL", "300")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "STRM_SCAN_INTERVAL") {
+		t.Fatalf("expected removed STRM_SCAN_INTERVAL error, got %v", err)
 	}
 }
 
