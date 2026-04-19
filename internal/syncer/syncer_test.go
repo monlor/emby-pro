@@ -259,6 +259,114 @@ func TestRunOnceSkipsFilesSmallerThanMinFileSize(t *testing.T) {
 	}
 }
 
+func TestRunOnceWritesMappedPublicSTRMPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/fs/list" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Path != "/115pan_cookie" {
+			t.Fatalf("list path = %s, want %s", req.Path, "/115pan_cookie")
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "success",
+			"data": map[string]any{
+				"total": 1,
+				"content": []map[string]any{
+					{
+						"name":     "demo.mp4",
+						"is_dir":   false,
+						"size":     123,
+						"modified": time.Now().Format(time.RFC3339),
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	store, err := index.Open(filepath.Join(tempDir, "index.db"))
+	if err != nil {
+		t.Fatalf("index.Open() error = %v", err)
+	}
+	defer store.Close()
+
+	client, err := openlist.NewClient(config.OpenListConfig{
+		BaseURL:        server.URL,
+		Token:          "token",
+		RequestTimeout: 5 * time.Second,
+		Retry:          1,
+		RetryBackoff:   time.Second,
+		ListPerPage:    100,
+	})
+	if err != nil {
+		t.Fatalf("openlist.NewClient() error = %v", err)
+	}
+
+	cfg := config.Config{
+		OpenList: config.OpenListConfig{
+			BaseURL:        server.URL,
+			Token:          "token",
+			RequestTimeout: 5 * time.Second,
+			Retry:          1,
+			RetryBackoff:   time.Second,
+			ListPerPage:    100,
+		},
+		Redirect: config.RedirectConfig{
+			PublicURL:        "http://127.0.0.1:18097",
+			ListenAddr:       "127.0.0.1:18097",
+			PathMappings:     []config.PathMapping{{SourcePrefix: "/115pan_cookie", PublicPrefix: "/115pan"}},
+			PlayTicketSecret: "test-secret",
+			PlayTicketTTL:    12 * time.Hour,
+		},
+		Sync: config.SyncConfig{
+			BaseDir:             filepath.Join(tempDir, "strm"),
+			RuleFile:            filepath.Join(tempDir, "none.yml"),
+			IndexDB:             filepath.Join(tempDir, "index.db"),
+			ScanInterval:        time.Millisecond,
+			FullRescanInterval:  time.Hour,
+			MaxDirsPerCycle:     10,
+			MaxRequestsPerCycle: 20,
+			VideoExts: map[string]struct{}{
+				".mp4": {},
+			},
+			CleanRemoved: true,
+			Overwrite:    true,
+			LogLevel:     "debug",
+		},
+		Rules: []config.Rule{
+			{
+				Name:       "115pan-cookie",
+				SourcePath: "/115pan_cookie",
+				TargetPath: filepath.Join(tempDir, "strm", "115pan_cookie"),
+			},
+		},
+	}
+
+	s := New(cfg, store, client)
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tempDir, "strm", "115pan_cookie", "demo.strm"))
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if got, want := string(content), "http://127.0.0.1:18097/strm/openlist/115pan/demo.mp4"; got != want {
+		t.Fatalf("strm content = %s, want %s", got, want)
+	}
+}
+
 func TestResolveWriteConflictsPrefersLargestThenExtension(t *testing.T) {
 	s := &Syncer{
 		logger: log.New(io.Discard, "", 0),

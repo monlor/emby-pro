@@ -82,6 +82,7 @@ func NewServer(cfg config.RedirectConfig, client *openlist.Client, embyClient *e
 		DirectPlayUsers:  cfg.DirectPlayUsers,
 		ListenAddr:       cfg.ListenAddr,
 		PublicURL:        cfg.PublicURL,
+		PathMappings:     cfg.PathMappings,
 		PlayTicketSecret: cfg.PlayTicketSecret,
 		PlayTicketTTL:    cfg.PlayTicketTTL,
 		RoutePrefix:      defaultRoutePrefix(cfg.RoutePrefix),
@@ -514,7 +515,8 @@ func (s *Server) sourcePathFromEscapedPath(escapedPath string) (string, string, 
 	if err != nil {
 		return "", "", false
 	}
-	return parts[0], pathutil.NormalizeSourcePath(decoded), true
+	publicPath := pathutil.NormalizeSourcePath(decoded)
+	return parts[0], config.MapPublicToSourcePath(s.cfg.PathMappings, publicPath), true
 }
 
 func (s *Server) buildPlayTicketURL(r *http.Request, sourcePath string, now time.Time) (string, error) {

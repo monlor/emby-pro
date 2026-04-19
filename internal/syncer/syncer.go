@@ -366,7 +366,8 @@ func (s *Syncer) fetchEntries(ctx context.Context, sourcePath string, requestBud
 }
 
 func (s *Syncer) buildSTRMContent(sourcePath string) (string, error) {
-	return s.redir.Build(sourcePath)
+	publicPath := config.MapSourceToPublicPath(s.cfg.Redirect.PathMappings, sourcePath)
+	return s.redir.Build(publicPath)
 }
 
 func (s *Syncer) writeOne(rule config.Rule, write fileWrite, existing index.FileRecord, exists bool) (shouldTrack bool, wrote bool, err error) {

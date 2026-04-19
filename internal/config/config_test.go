@@ -208,6 +208,63 @@ func TestLoadSupportsExplicitEmbyBaseURL(t *testing.T) {
 	}
 }
 
+func TestLoadSupportsPathMappings(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/115pan_cookie")
+	t.Setenv("STRM_PATH_MAPPINGS", "/115pan_cookie:/115pan,/quark_cookie:/quark")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_BASE_DIR", "/strm")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Redirect.PathMappings) != 2 {
+		t.Fatalf("expected 2 path mappings, got %d", len(cfg.Redirect.PathMappings))
+	}
+	if got, want := cfg.Rules[0].SourcePath, "/115pan_cookie"; got != want {
+		t.Fatalf("rule source path = %s, want %s", got, want)
+	}
+}
+
+func TestLoadRejectsDuplicatePathMappingSourcePrefix(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/115pan_cookie")
+	t.Setenv("STRM_PATH_MAPPINGS", "/115pan_cookie:/115pan,/115pan_cookie:/115pan-bak")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_BASE_DIR", "/strm")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "STRM_PATH_MAPPINGS") {
+		t.Fatalf("expected STRM_PATH_MAPPINGS error, got %v", err)
+	}
+}
+
+func TestMapSourceToPublicPathUsesLongestSourcePrefix(t *testing.T) {
+	mappings := []PathMapping{
+		{SourcePrefix: "/115pan_cookie/series", PublicPrefix: "/115pan/series"},
+		{SourcePrefix: "/115pan_cookie", PublicPrefix: "/115pan"},
+	}
+
+	if got, want := MapSourceToPublicPath(mappings, "/115pan_cookie/series/demo.mp4"), "/115pan/series/demo.mp4"; got != want {
+		t.Fatalf("MapSourceToPublicPath() = %s, want %s", got, want)
+	}
+	if got, want := MapSourceToPublicPath(mappings, "/115pan_cookie/movie/demo.mp4"), "/115pan/movie/demo.mp4"; got != want {
+		t.Fatalf("MapSourceToPublicPath() = %s, want %s", got, want)
+	}
+	if got, want := MapPublicToSourcePath(mappings, "/115pan/series/demo.mp4"), "/115pan_cookie/series/demo.mp4"; got != want {
+		t.Fatalf("MapPublicToSourcePath() = %s, want %s", got, want)
+	}
+}
+
 func TestLoadGeneratesEphemeralPlayTicketSecretWhenMissing(t *testing.T) {
 	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
 	t.Setenv("OPENLIST_USERNAME", "user")

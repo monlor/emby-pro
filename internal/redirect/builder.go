@@ -28,9 +28,10 @@ type playTicketClaims struct {
 }
 
 type Builder struct {
-	publicURL   *url.URL
-	secret      []byte
-	routePrefix string
+	publicURL    *url.URL
+	secret       []byte
+	pathMappings []config.PathMapping
+	routePrefix  string
 }
 
 func NewBuilder(cfg config.RedirectConfig) *Builder {
@@ -42,9 +43,10 @@ func NewBuilder(cfg config.RedirectConfig) *Builder {
 		return nil
 	}
 	return &Builder{
-		publicURL:   u,
-		secret:      []byte(cfg.PlayTicketSecret),
-		routePrefix: defaultRoutePrefix(cfg.RoutePrefix),
+		publicURL:    u,
+		secret:       []byte(cfg.PlayTicketSecret),
+		pathMappings: cfg.PathMappings,
+		routePrefix:  defaultRoutePrefix(cfg.RoutePrefix),
 	}
 }
 
@@ -162,13 +164,15 @@ func (b *Builder) buildManagedURL(provider, sourcePath string) url.URL {
 }
 
 func (b *Builder) buildManagedURLForPublicURL(publicURL *url.URL, provider, sourcePath string) url.URL {
+	publicPath := config.MapSourceToPublicPath(b.pathMappings, sourcePath)
+
 	u := *publicURL
 	basePath := strings.TrimSuffix(publicURL.Path, "/")
 	if basePath == "" {
 		basePath = "/"
 	}
 
-	segs := strings.Split(strings.TrimPrefix(sourcePath, "/"), "/")
+	segs := strings.Split(strings.TrimPrefix(publicPath, "/"), "/")
 	escapedSegs := make([]string, 0, len(segs))
 	for _, seg := range segs {
 		if seg == "" {
@@ -177,7 +181,7 @@ func (b *Builder) buildManagedURLForPublicURL(publicURL *url.URL, provider, sour
 		escapedSegs = append(escapedSegs, url.PathEscape(seg))
 	}
 
-	u.Path = path.Join(basePath, b.routePrefix, provider, sourcePath)
+	u.Path = path.Join(basePath, b.routePrefix, provider, publicPath)
 	rawSegments := append([]string{strings.TrimSuffix(publicURL.EscapedPath(), "/"), b.routePrefix, provider}, escapedSegs...)
 	u.RawPath = path.Join(rawSegments...)
 	u.RawQuery = ""

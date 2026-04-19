@@ -38,6 +38,11 @@ type Config struct {
 	Rules    []Rule
 }
 
+type PathMapping struct {
+	SourcePrefix string
+	PublicPrefix string
+}
+
 type OpenListConfig struct {
 	BaseURL            string
 	PublicURL          string
@@ -80,6 +85,7 @@ type RedirectConfig struct {
 	DirectPlayUsers  map[string]struct{} // user IDs or names; nil means apply DirectPlay to all
 	ListenAddr       string
 	PublicURL        string
+	PathMappings     []PathMapping
 	PlayTicketSecret string
 	EphemeralSecret  bool
 	PlayTicketTTL    time.Duration
@@ -140,6 +146,7 @@ func Load() (Config, error) {
 			DirectPlayUsers:  parseStringSet(getenvString("OPENLIST_DIRECT_PLAY_USERS", "")),
 			ListenAddr:       defaultRedirectListenAddr,
 			PublicURL:        strings.TrimSpace(getenvString("PUBLIC_URL", defaultRedirectPublicURL)),
+			PathMappings:     nil,
 			PlayTicketSecret: strings.TrimSpace(getenvString("PLAY_TICKET_SECRET", "")),
 			PlayTicketTTL:    getenvDuration("PLAY_TICKET_TTL", 12*time.Hour),
 			RoutePrefix:      defaultRedirectRoutePrefix,
@@ -197,6 +204,11 @@ func Load() (Config, error) {
 	if !strings.HasPrefix(cfg.Emby.ValidatePath, "/") {
 		cfg.Emby.ValidatePath = "/" + cfg.Emby.ValidatePath
 	}
+	pathMappings, err := parsePathMappings(getenvString("STRM_PATH_MAPPINGS", ""))
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid STRM_PATH_MAPPINGS: %w", err)
+	}
+	cfg.Redirect.PathMappings = pathMappings
 
 	envRules, err := buildEnvRules(cfg.Sync.BaseDir)
 	if err != nil {
@@ -400,6 +412,108 @@ func defaultRuleName(sourcePath string) string {
 		return "root"
 	}
 	return name
+}
+
+func MapSourceToPublicPath(mappings []PathMapping, sourcePath string) string {
+	sourcePath = pathutil.NormalizeSourcePath(sourcePath)
+	if sourcePath == "" {
+		return ""
+	}
+
+	bestLen := -1
+	mapped := sourcePath
+	for _, mapping := range mappings {
+		if !matchesPathPrefix(sourcePath, mapping.SourcePrefix) {
+			continue
+		}
+		if len(mapping.SourcePrefix) <= bestLen {
+			continue
+		}
+		bestLen = len(mapping.SourcePrefix)
+		suffix := strings.TrimPrefix(sourcePath, mapping.SourcePrefix)
+		mapped = pathutil.NormalizeSourcePath(mapping.PublicPrefix + suffix)
+	}
+	return mapped
+}
+
+func MapPublicToSourcePath(mappings []PathMapping, publicPath string) string {
+	publicPath = pathutil.NormalizeSourcePath(publicPath)
+	if publicPath == "" {
+		return ""
+	}
+
+	bestLen := -1
+	mapped := publicPath
+	for _, mapping := range mappings {
+		if !matchesPathPrefix(publicPath, mapping.PublicPrefix) {
+			continue
+		}
+		if len(mapping.PublicPrefix) <= bestLen {
+			continue
+		}
+		bestLen = len(mapping.PublicPrefix)
+		suffix := strings.TrimPrefix(publicPath, mapping.PublicPrefix)
+		mapped = pathutil.NormalizeSourcePath(mapping.SourcePrefix + suffix)
+	}
+	return mapped
+}
+
+func matchesPathPrefix(fullPath, prefix string) bool {
+	if fullPath == prefix {
+		return true
+	}
+	if prefix == "/" {
+		return strings.HasPrefix(fullPath, "/")
+	}
+	return strings.HasPrefix(fullPath, prefix+"/")
+}
+
+func parsePathMappings(raw string) ([]PathMapping, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	mappings := make([]PathMapping, 0)
+	seenSource := make(map[string]struct{})
+	seenPublic := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		pieces := strings.SplitN(part, ":", 2)
+		if len(pieces) != 2 {
+			return nil, fmt.Errorf("expected source format /stable:/active, got %q", part)
+		}
+
+		sourcePrefix := pathutil.NormalizeSourcePath(pieces[0])
+		publicPrefix := pathutil.NormalizeSourcePath(pieces[1])
+		if sourcePrefix == "" || publicPrefix == "" {
+			return nil, fmt.Errorf("mapping paths cannot be empty: %q", part)
+		}
+		if _, ok := seenSource[sourcePrefix]; ok {
+			return nil, fmt.Errorf("duplicate source prefix %s", sourcePrefix)
+		}
+		if _, ok := seenPublic[publicPrefix]; ok {
+			return nil, fmt.Errorf("duplicate public prefix %s", publicPrefix)
+		}
+		seenSource[sourcePrefix] = struct{}{}
+		seenPublic[publicPrefix] = struct{}{}
+		mappings = append(mappings, PathMapping{
+			SourcePrefix: sourcePrefix,
+			PublicPrefix: publicPrefix,
+		})
+	}
+
+	sort.Slice(mappings, func(i, j int) bool {
+		if len(mappings[i].SourcePrefix) != len(mappings[j].SourcePrefix) {
+			return len(mappings[i].SourcePrefix) > len(mappings[j].SourcePrefix)
+		}
+		return mappings[i].SourcePrefix < mappings[j].SourcePrefix
+	})
+	return mappings, nil
 }
 
 func compileOptionalPattern(pattern string) (*regexp.Regexp, error) {

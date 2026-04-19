@@ -272,13 +272,79 @@ func TestHandleSTRMUsesOpenListPublicURLForRedirect(t *testing.T) {
 	}
 }
 
+func TestHandleSTRMMapsPublicRouteBackToSourcePath(t *testing.T) {
+	openlistServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/fs/get" {
+			t.Fatalf("unexpected openlist path: %s", r.URL.Path)
+		}
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode openlist request: %v", err)
+		}
+		if req.Path != "/115pan_cookie/movies/demo.mp4" {
+			t.Fatalf("unexpected openlist source path: %s", req.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "success",
+			"data": map[string]any{
+				"name":   "demo.mp4",
+				"is_dir": false,
+				"sign":   "demo-sign",
+			},
+		})
+	}))
+	defer openlistServer.Close()
+
+	embyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer embyServer.Close()
+
+	server := newTestServer(t, openlistServer.URL, embyServer.URL, config.RedirectConfig{
+		ListenAddr:       ":8097",
+		PublicURL:        "https://emby.example.com",
+		PathMappings:     []config.PathMapping{{SourcePrefix: "/115pan_cookie", PublicPrefix: "/115pan"}},
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+		PlayTicketTTL:    time.Hour,
+	})
+
+	ticketURL, err := server.builder.BuildPlayTicket("/115pan_cookie/movies/demo.mp4", time.Now(), time.Hour)
+	if err != nil {
+		t.Fatalf("BuildPlayTicket() error = %v", err)
+	}
+	parsed, err := url.Parse(ticketURL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	if got, want := parsed.Path, "/strm/openlist/115pan/movies/demo.mp4"; got != want {
+		t.Fatalf("ticket path = %s, want %s", got, want)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, parsed.RequestURI(), nil)
+	rec := httptest.NewRecorder()
+	server.handleSTRM(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, want := rec.Header().Get("Location"), openlistServer.URL+"/d/115pan_cookie/movies/demo.mp4?sign=demo-sign"; got != want {
+		t.Fatalf("redirect location = %s, want %s", got, want)
+	}
+}
+
 func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 	builder := NewBuilder(config.RedirectConfig{
 		PublicURL:        "http://127.0.0.1:8097",
+		PathMappings:     []config.PathMapping{{SourcePrefix: "/115pan_cookie", PublicPrefix: "/115pan"}},
 		PlayTicketSecret: "test-secret",
 		RoutePrefix:      "/strm",
 	})
-	stablePath, err := builder.Build("/media/测试 demo.mp4")
+	stablePath, err := builder.Build("/115pan_cookie/测试 demo.mp4")
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -310,6 +376,7 @@ func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 		DirectPlay:       true,
 		ListenAddr:       ":8097",
 		PublicURL:        "http://127.0.0.1:8097",
+		PathMappings:     []config.PathMapping{{SourcePrefix: "/115pan_cookie", PublicPrefix: "/115pan"}},
 		PlayTicketSecret: "test-secret",
 		RoutePrefix:      "/strm",
 		PlayTicketTTL:    12 * time.Hour,
@@ -336,7 +403,7 @@ func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse(path) error = %v", err)
 	}
-	if got, want := parsedPath.Path, "/strm/openlist/media/测试 demo.mp4"; got != want {
+	if got, want := parsedPath.Path, "/strm/openlist/115pan/测试 demo.mp4"; got != want {
 		t.Fatalf("rewritten path = %s, want %s", got, want)
 	}
 	if parsedPath.Query().Get(playTicketParam) == "" {
@@ -351,7 +418,7 @@ func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 	if parsedDirect.Scheme != "" || parsedDirect.Host != "" {
 		t.Fatalf("expected relative DirectStreamUrl, got %s", directStreamURL)
 	}
-	if got, want := parsedDirect.Path, "/strm/openlist/media/测试 demo.mp4"; got != want {
+	if got, want := parsedDirect.Path, "/strm/openlist/115pan/测试 demo.mp4"; got != want {
 		t.Fatalf("unexpected DirectStreamUrl path: %s want %s", got, want)
 	}
 	if parsedDirect.Query().Get(playTicketParam) == "" {
