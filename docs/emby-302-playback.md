@@ -129,8 +129,8 @@
 
 因此当前实现是：
 
-- 总是改 `MediaSources.Path`
-- 如果启用 direct play，再把 `DirectStreamUrl` 也改成同一个短效 `/strm/openlist/...?...t=...`
+- 仅当当前客户端允许 direct play 时，改写 `MediaSources.Path`
+- 同时把 `DirectStreamUrl` 也改成同一个短效 `/strm/openlist/...?...t=...`
 
 这样 `Path` 和 `DirectStreamUrl` 最终都汇聚到同一个受控入口。
 

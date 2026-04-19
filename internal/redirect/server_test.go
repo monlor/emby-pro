@@ -569,10 +569,10 @@ func TestHandleProxyEmbyPreservesTranscodingWhenDirectPlayDisabled(t *testing.T)
 		t.Fatalf("url.Parse(path) error = %v", err)
 	}
 	if got, want := parsedPath.Path, "/strm/openlist/media/demo.mp4"; got != want {
-		t.Fatalf("rewritten path = %s, want %s", got, want)
+		t.Fatalf("path = %s, want %s", got, want)
 	}
-	if parsedPath.Query().Get(playTicketParam) == "" {
-		t.Fatalf("expected play ticket in rewritten path, got %s", pathValue)
+	if parsedPath.Query().Get(playTicketParam) != "" {
+		t.Fatalf("expected path to stay unchanged, got %s", pathValue)
 	}
 
 	directStreamURL, _ := source["DirectStreamUrl"].(string)
@@ -644,6 +644,18 @@ func TestHandlePlaybackInfoPreservesTranscodingForWebWhenWebDirectPlayDisabled(t
 		t.Fatalf("decode response: %v", err)
 	}
 	source := payload["MediaSources"].([]any)[0].(map[string]any)
+
+	pathValue, _ := source["Path"].(string)
+	parsedPath, err := url.Parse(pathValue)
+	if err != nil {
+		t.Fatalf("url.Parse(path) error = %v", err)
+	}
+	if got, want := parsedPath.Path, "/strm/openlist/media/demo.mp4"; got != want {
+		t.Fatalf("path = %s, want %s", got, want)
+	}
+	if parsedPath.Query().Get(playTicketParam) != "" {
+		t.Fatalf("expected path to stay unchanged for web, got %s", pathValue)
+	}
 
 	directStreamURL, _ := source["DirectStreamUrl"].(string)
 	if got, want := directStreamURL, "/videos/6/original.mkv?api_key=token"; got != want {

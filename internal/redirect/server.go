@@ -325,6 +325,9 @@ func (s *Server) maybeRewritePlaybackInfo(r *http.Request, body []byte, directPl
 	if len(body) == 0 {
 		return body, nil
 	}
+	if !directPlay {
+		return body, nil
+	}
 
 	token := extractEmbyToken(r)
 	if token == "" {
@@ -373,10 +376,6 @@ func (s *Server) maybeRewritePlaybackInfo(r *http.Request, body []byte, directPl
 		s.cacheMediaPath(itemID+":"+mediaSourceID, pathValue)
 		source["Path"] = ticketURL
 		rewritten = true
-
-		if !directPlay {
-			continue
-		}
 
 		directURL, err := s.builder.BuildRelativePlayTicket(managedSource, now, s.cfg.PlayTicketTTL)
 		if err != nil {
