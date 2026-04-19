@@ -22,7 +22,7 @@ services:
 
       STRM_BASE_DIR: /strm
       STRM_SYNC_PROFILE: ${STRM_SYNC_PROFILE:-conservative}
-      # 如需局部覆盖 profile，再单独设置下面这些变量。
+      # 如需局部覆盖 profile，再单独设置下面这些变量；这些限流只作用于 .strm 同步扫描。
       # OPENLIST_RATE_LIMIT_QPS: ${OPENLIST_RATE_LIMIT_QPS:-0.2}
       # OPENLIST_RATE_LIMIT_BURST: ${OPENLIST_RATE_LIMIT_BURST:-1}
       # STRM_FULL_RESCAN_INTERVAL: ${STRM_FULL_RESCAN_INTERVAL:-168h}

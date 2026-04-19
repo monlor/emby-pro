@@ -59,6 +59,14 @@ type loginResponse struct {
 }
 
 func NewClient(cfg config.OpenListConfig) (*Client, error) {
+	return newClient(cfg, true)
+}
+
+func NewUnlimitedClient(cfg config.OpenListConfig) (*Client, error) {
+	return newClient(cfg, false)
+}
+
+func newClient(cfg config.OpenListConfig, enableRateLimit bool) (*Client, error) {
 	baseURL, err := url.Parse(cfg.BaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse base url: %w", err)
@@ -78,7 +86,7 @@ func NewClient(cfg config.OpenListConfig) (*Client, error) {
 		ForceAttemptHTTP2: !cfg.DisableHTTP2,
 	}
 	var limiter *rate.Limiter
-	if cfg.RateLimitQPS > 0 {
+	if enableRateLimit && cfg.RateLimitQPS > 0 {
 		limiter = rate.NewLimiter(rate.Limit(cfg.RateLimitQPS), max(1, cfg.RateLimitBurst))
 	}
 	return &Client{

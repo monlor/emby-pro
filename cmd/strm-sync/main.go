@@ -35,12 +35,17 @@ func main() {
 	}
 	defer store.Close()
 
-	client, err := openlist.NewClient(cfg.OpenList)
+	syncClient, err := openlist.NewClient(cfg.OpenList)
 	if err != nil {
-		log.Fatalf("init openlist client: %v", err)
+		log.Fatalf("init sync openlist client: %v", err)
 	}
 
-	s := syncer.New(cfg, store, client)
+	runtimeClient, err := openlist.NewUnlimitedClient(cfg.OpenList)
+	if err != nil {
+		log.Fatalf("init runtime openlist client: %v", err)
+	}
+
+	s := syncer.New(cfg, store, syncClient)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -61,7 +66,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("init emby client: %v", err)
 	}
-	redirectServer := redirect.NewServer(cfg.Redirect, client, embyClient, log.New(os.Stdout, "[emby-pro] ", log.LstdFlags), cfg.Emby.TokenCacheTTL)
+	redirectServer := redirect.NewServer(cfg.Redirect, runtimeClient, embyClient, log.New(os.Stdout, "[emby-pro] ", log.LstdFlags), cfg.Emby.TokenCacheTTL)
 	go func() {
 		errCh <- redirectServer.Run(ctx)
 	}()

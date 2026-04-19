@@ -91,3 +91,51 @@ func TestListPageAppliesRateLimit(t *testing.T) {
 		t.Fatalf("expected rate limiter to delay second request, got %s", delta)
 	}
 }
+
+func TestNewUnlimitedClientDisablesRateLimit(t *testing.T) {
+	var callTimes []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callTimes = append(callTimes, time.Now())
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "success",
+			"data": map[string]any{
+				"total":   0,
+				"content": []map[string]any{},
+			},
+		}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewUnlimitedClient(config.OpenListConfig{
+		BaseURL:        server.URL,
+		Token:          "token",
+		RequestTimeout: 2 * time.Second,
+		Retry:          1,
+		RetryBackoff:   time.Millisecond,
+		ListPerPage:    200,
+		RateLimitQPS:   0.2,
+		RateLimitBurst: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewUnlimitedClient() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if _, err := client.Get(ctx, "/media/demo.mp4"); err != nil {
+		t.Fatalf("first Get() error = %v", err)
+	}
+	if _, err := client.Get(ctx, "/media/demo.mp4"); err != nil {
+		t.Fatalf("second Get() error = %v", err)
+	}
+
+	if len(callTimes) != 2 {
+		t.Fatalf("expected 2 calls, got %d", len(callTimes))
+	}
+	if delta := callTimes[1].Sub(callTimes[0]); delta > 100*time.Millisecond {
+		t.Fatalf("expected unlimited client to avoid rate limiter delay, got %s", delta)
+	}
+}

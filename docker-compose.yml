@@ -19,7 +19,7 @@ services:
       PLAY_TICKET_TTL: 12h
       # 快速选择同步档位：conservative / balanced / aggressive。
       STRM_SYNC_PROFILE: conservative
-      # 如需局部覆盖 profile，再单独打开下面的变量。
+      # 如需局部覆盖 profile，再单独打开下面的变量；这些限流只作用于 .strm 同步扫描。
       # OPENLIST_RATE_LIMIT_QPS: "0.2"
       # OPENLIST_RATE_LIMIT_BURST: "1"
       # STRM_FULL_RESCAN_INTERVAL: 168h
