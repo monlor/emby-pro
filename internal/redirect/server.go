@@ -24,16 +24,9 @@ import (
 	"github.com/monlor/emby-pro/internal/pathutil"
 )
 
-const mediaPathCacheTTL = 30 * time.Minute
-
 type tokenCacheEntry struct {
 	expiry   time.Time
 	userInfo *emby.UserInfo
-}
-
-type mediaPathCacheEntry struct {
-	pathValue string
-	expiry    time.Time
 }
 
 type Server struct {
@@ -47,9 +40,6 @@ type Server struct {
 	tokenCache map[string]tokenCacheEntry
 	tokenTTL   time.Duration
 
-	mediaPathCacheMu sync.Mutex
-	mediaPathCache   map[string]mediaPathCacheEntry
-
 	proxy *httputil.ReverseProxy
 }
 
@@ -57,8 +47,6 @@ var embyTokenPattern = regexp.MustCompile(`(?i)token="?([^", ]+)"?`)
 var embyDeviceIDPattern = regexp.MustCompile(`(?i)deviceid="?([^", ]+)"?`)
 var embyClientPattern = regexp.MustCompile(`(?i)client="?([^",]+)"?`)
 var playbackInfoPathPattern = regexp.MustCompile(`(?i)^(?:/emby)?/Items/([^/]+)/PlaybackInfo$`)
-var videoStreamPathPattern = regexp.MustCompile(`(?i)^(?:/emby)?/videos/([^/]+)/(?:stream(?:/.*)?|stream\.[^/]+|original(?:/.*)?|original\.[^/]+)$`)
-var itemDownloadPathPattern = regexp.MustCompile(`(?i)^(?:/emby)?/Items/([^/]+)/Download(?:/.*)?$`)
 
 func NewServer(cfg config.RedirectConfig, client *openlist.Client, embyClient *emby.Client, logger *log.Logger, tokenTTL time.Duration) *Server {
 	if tokenTTL <= 0 {
@@ -95,7 +83,6 @@ func NewServer(cfg config.RedirectConfig, client *openlist.Client, embyClient *e
 		builder:        NewBuilder(serverCfg),
 		tokenCache:     make(map[string]tokenCacheEntry),
 		tokenTTL:       tokenTTL,
-		mediaPathCache: make(map[string]mediaPathCacheEntry),
 		proxy:          proxy,
 	}
 }
@@ -140,11 +127,6 @@ func (s *Server) handleProxyEmby(w http.ResponseWriter, r *http.Request) {
 
 	if playbackInfoPathPattern.MatchString(r.URL.Path) {
 		s.handlePlaybackInfo(w, r)
-		return
-	}
-
-	if s.isDirectPlayEnabled(r) && (videoStreamPathPattern.MatchString(r.URL.Path) || itemDownloadPathPattern.MatchString(r.URL.Path)) {
-		s.handleMediaRequest(w, r)
 		return
 	}
 
@@ -222,60 +204,6 @@ func (s *Server) handlePlaybackInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Del("Content-Length")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(mediaInfo)
-}
-
-func (s *Server) handleMediaRequest(w http.ResponseWriter, r *http.Request) {
-	token := extractEmbyToken(r)
-	if token == "" {
-		s.proxy.ServeHTTP(w, r)
-		return
-	}
-
-	itemID := extractItemID(r.URL.Path)
-	mediaSourceID := mediaSourceIDFromRequest(r)
-	if itemID == "" || mediaSourceID == "" {
-		s.proxy.ServeHTTP(w, r)
-		return
-	}
-
-	cacheKey := itemID + ":" + mediaSourceID
-	if pathValue, ok := s.getCachedMediaPath(cacheKey); ok {
-		targetSource, directRemote, managed := s.resolveManagedMediaPath(pathValue)
-		if managed && targetSource != "" {
-			s.redirectToTarget(w, r, openListProvider, targetSource)
-			return
-		}
-		if directRemote != "" {
-			http.Redirect(w, r, directRemote, http.StatusFound)
-			return
-		}
-	}
-
-	playbackInfoURI := s.playbackInfoURI(r.URL.Path, itemID, mediaSourceID, token)
-	info, err := s.embyClient.FetchPlaybackInfo(r.Context(), playbackInfoURI, token)
-	if err != nil {
-		s.proxy.ServeHTTP(w, r)
-		return
-	}
-
-	mediaSource := findMediaSource(info, mediaSourceID)
-	if mediaSource == nil {
-		s.proxy.ServeHTTP(w, r)
-		return
-	}
-
-	pathValue, _ := mediaSource["Path"].(string)
-	targetSource, directRemote, ok := s.resolveManagedMediaPath(pathValue)
-	if ok && targetSource != "" {
-		s.redirectToTarget(w, r, openListProvider, targetSource)
-		return
-	}
-	if directRemote != "" {
-		http.Redirect(w, r, directRemote, http.StatusFound)
-		return
-	}
-
-	s.proxy.ServeHTTP(w, r)
 }
 
 func (s *Server) redirectToTarget(w http.ResponseWriter, r *http.Request, provider, sourcePath string) {
@@ -373,7 +301,6 @@ func (s *Server) maybeRewritePlaybackInfo(r *http.Request, body []byte, directPl
 			return nil, err
 		}
 
-		s.cacheMediaPath(itemID+":"+mediaSourceID, pathValue)
 		source["Path"] = ticketURL
 		rewritten = true
 
@@ -397,14 +324,6 @@ func (s *Server) maybeRewritePlaybackInfo(r *http.Request, body []byte, directPl
 		return body, nil
 	}
 	return json.Marshal(payload)
-}
-
-func (s *Server) playbackInfoURI(pathValue, itemID, mediaSourceID, token string) string {
-	prefix := requestPathPrefix(pathValue)
-	query := url.Values{}
-	query.Set("MediaSourceId", mediaSourceID)
-	query.Set("api_key", token)
-	return fmt.Sprintf("%s/Items/%s/PlaybackInfo?%s", prefix, itemID, query.Encode())
 }
 
 func (s *Server) resolveManagedMediaPath(pathValue string) (managedSource string, directRemote string, ok bool) {
@@ -468,29 +387,6 @@ func (s *Server) getCachedUserInfo(token string) *emby.UserInfo {
 		return nil
 	}
 	return entry.userInfo
-}
-
-func (s *Server) cacheMediaPath(key, pathValue string) {
-	s.mediaPathCacheMu.Lock()
-	defer s.mediaPathCacheMu.Unlock()
-	s.mediaPathCache[key] = mediaPathCacheEntry{
-		pathValue: pathValue,
-		expiry:    time.Now().Add(mediaPathCacheTTL),
-	}
-}
-
-func (s *Server) getCachedMediaPath(key string) (string, bool) {
-	s.mediaPathCacheMu.Lock()
-	defer s.mediaPathCacheMu.Unlock()
-	entry, ok := s.mediaPathCache[key]
-	if !ok {
-		return "", false
-	}
-	if time.Now().After(entry.expiry) {
-		delete(s.mediaPathCache, key)
-		return "", false
-	}
-	return entry.pathValue, true
 }
 
 func (s *Server) sourcePathFromRoute(r *http.Request) (string, string, bool) {
@@ -693,41 +589,7 @@ func extractItemID(pathValue string) string {
 	if matches := playbackInfoPathPattern.FindStringSubmatch(pathValue); len(matches) == 2 {
 		return matches[1]
 	}
-	if matches := videoStreamPathPattern.FindStringSubmatch(pathValue); len(matches) == 2 {
-		return matches[1]
-	}
-	if matches := itemDownloadPathPattern.FindStringSubmatch(pathValue); len(matches) == 2 {
-		return matches[1]
-	}
 	return ""
-}
-
-func mediaSourceIDFromRequest(r *http.Request) string {
-	return strings.TrimSpace(firstNonEmpty(
-		r.URL.Query().Get("MediaSourceId"),
-		r.URL.Query().Get("mediaSourceId"),
-	))
-}
-
-func findMediaSource(payload map[string]any, mediaSourceID string) map[string]any {
-	sources, ok := payload["MediaSources"].([]any)
-	if !ok {
-		return nil
-	}
-	for _, rawSource := range sources {
-		source, ok := rawSource.(map[string]any)
-		if !ok {
-			continue
-		}
-		if sourceID, _ := source["Id"].(string); sourceID == mediaSourceID {
-			return source
-		}
-	}
-	if len(sources) == 0 {
-		return nil
-	}
-	source, _ := sources[0].(map[string]any)
-	return source
 }
 
 func requestPathPrefix(pathValue string) string {
