@@ -111,6 +111,26 @@ func TestLoadOpenListDirectPlayWebFlag(t *testing.T) {
 	}
 }
 
+func TestLoadOpenListFastPlaybackInfoFlag(t *testing.T) {
+	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
+	t.Setenv("OPENLIST_USERNAME", "user")
+	t.Setenv("OPENLIST_PASSWORD", "pass")
+	t.Setenv("OPENLIST_PATHS", "/movies")
+	t.Setenv("OPENLIST_FAST_PLAYBACKINFO", "true")
+	t.Setenv("PLAY_TICKET_SECRET", "test-secret")
+	t.Setenv("STRM_BASE_DIR", "/strm")
+	t.Setenv("STRM_RULES_FILE", filepath.Join(t.TempDir(), "missing.yml"))
+	t.Setenv("STRM_INDEX_DB", filepath.Join(t.TempDir(), "index.db"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Redirect.FastPlaybackInfo {
+		t.Fatalf("expected fast playbackinfo to be enabled")
+	}
+}
+
 func TestLoadSupportsExplicitPublicURL(t *testing.T) {
 	t.Setenv("OPENLIST_BASE_URL", "http://openlist:5244")
 	t.Setenv("OPENLIST_USERNAME", "user")

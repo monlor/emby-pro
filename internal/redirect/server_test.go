@@ -432,6 +432,236 @@ func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 	}
 }
 
+func TestHandlePlaybackInfoFastPathBuildsFromItemMetadata(t *testing.T) {
+	builder := NewBuilder(config.RedirectConfig{
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+	})
+	stablePath, err := builder.Build("/media/demo.mp4")
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	embyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/Items/6/PlaybackInfo" {
+			t.Fatalf("fast path should not call PlaybackInfo")
+		}
+		if r.URL.Path != "/Users/user-id/Items/6" {
+			t.Fatalf("unexpected emby path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("Fields"); got == "" {
+			t.Fatalf("expected Fields query, got empty")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"Chapters": []map[string]any{
+				{"StartPositionTicks": 0, "Name": "Chapter 1"},
+			},
+			"MediaSources": []map[string]any{
+				{
+					"Id":                   "mediasource_6",
+					"Path":                 stablePath,
+					"Container":            "mkv",
+					"Protocol":             "Http",
+					"SupportsDirectPlay":   true,
+					"SupportsDirectStream": true,
+					"SupportsTranscoding":  true,
+					"MediaStreams": []map[string]any{
+						{"Index": 0, "Type": "Video"},
+					},
+				},
+			},
+			"RunTimeTicks": 123456789,
+		})
+	}))
+	defer embyServer.Close()
+
+	server := newTestServer(t, "http://openlist.invalid", embyServer.URL, config.RedirectConfig{
+		DirectPlay:       true,
+		FastPlaybackInfo: true,
+		ListenAddr:       ":8097",
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+		PlayTicketTTL:    12 * time.Hour,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/Items/6/PlaybackInfo?api_key=valid-token&UserId=user-id&MediaSourceId=mediasource_6", io.NopCloser(strings.NewReader(`{}`)))
+	rec := httptest.NewRecorder()
+
+	server.handlePlaybackInfo(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	playSessionID, _ := payload["PlaySessionId"].(string)
+	if playSessionID == "" {
+		t.Fatalf("expected fast path to include non-empty PlaySessionId")
+	}
+	source := payload["MediaSources"].([]any)[0].(map[string]any)
+	pathValue, _ := source["Path"].(string)
+	parsedPath, err := url.Parse(pathValue)
+	if err != nil {
+		t.Fatalf("url.Parse(path) error = %v", err)
+	}
+	if got, want := parsedPath.Path, "/strm/openlist/media/demo.mp4"; got != want {
+		t.Fatalf("unexpected path: %s want %s", got, want)
+	}
+	if parsedPath.Query().Get(playTicketParam) == "" {
+		t.Fatalf("expected play ticket in path: %s", pathValue)
+	}
+	chapters, _ := source["Chapters"].([]any)
+	if len(chapters) != 1 {
+		t.Fatalf("expected chapters to be copied onto source, got %d", len(chapters))
+	}
+}
+
+func TestHandlePlaybackInfoFastPathFallsBackWhenDirectPlayDisabled(t *testing.T) {
+	builder := NewBuilder(config.RedirectConfig{
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+	})
+	stablePath, err := builder.Build("/media/demo.mp4")
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	var playbackInfoCalls int
+	embyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/Items/6/PlaybackInfo" {
+			t.Fatalf("unexpected emby path: %s", r.URL.Path)
+		}
+		playbackInfoCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"MediaSources": []map[string]any{
+				{
+					"Id":                   "mediasource_6",
+					"Path":                 stablePath,
+					"Container":            "mkv",
+					"SupportsDirectPlay":   false,
+					"SupportsDirectStream": false,
+					"SupportsTranscoding":  true,
+					"TranscodingUrl":       "/videos/6/master.m3u8?api_key=token",
+				},
+			},
+			"PlaySessionId": "play-session",
+		})
+	}))
+	defer embyServer.Close()
+
+	server := newTestServer(t, "http://openlist.invalid", embyServer.URL, config.RedirectConfig{
+		DirectPlay:       false,
+		FastPlaybackInfo: true,
+		ListenAddr:       ":8097",
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+		PlayTicketTTL:    12 * time.Hour,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/Items/6/PlaybackInfo?api_key=valid-token&UserId=user-id&MediaSourceId=mediasource_6", io.NopCloser(strings.NewReader(`{}`)))
+	rec := httptest.NewRecorder()
+
+	server.handlePlaybackInfo(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if playbackInfoCalls != 1 {
+		t.Fatalf("expected fallback PlaybackInfo call, got %d", playbackInfoCalls)
+	}
+}
+
+func TestHandlePlaybackInfoFastPathRespectsWebDirectPlayFlag(t *testing.T) {
+	builder := NewBuilder(config.RedirectConfig{
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+	})
+	stablePath, err := builder.Build("/media/demo.mp4")
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	var itemCalls int
+	var playbackInfoCalls int
+	embyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/user-id/Items/6":
+			itemCalls++
+			t.Fatalf("fast path should not fetch item metadata when web direct play is disabled")
+		case "/Items/6/PlaybackInfo":
+			playbackInfoCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"MediaSources": []map[string]any{
+					{
+						"Id":                   "mediasource_6",
+						"Path":                 stablePath,
+						"Container":            "mkv",
+						"Protocol":             "Http",
+						"SupportsDirectPlay":   false,
+						"SupportsDirectStream": false,
+						"SupportsTranscoding":  true,
+						"TranscodingUrl":       "/videos/6/master.m3u8?api_key=token",
+					},
+				},
+				"PlaySessionId": "play-session",
+			})
+		default:
+			t.Fatalf("unexpected emby path: %s", r.URL.Path)
+		}
+	}))
+	defer embyServer.Close()
+
+	server := newTestServer(t, "http://openlist.invalid", embyServer.URL, config.RedirectConfig{
+		DirectPlay:       true,
+		DirectPlayWeb:    false,
+		FastPlaybackInfo: true,
+		ListenAddr:       ":8097",
+		PublicURL:        "http://127.0.0.1:8097",
+		PlayTicketSecret: "test-secret",
+		RoutePrefix:      "/strm",
+		PlayTicketTTL:    12 * time.Hour,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/Items/6/PlaybackInfo?api_key=valid-token&UserId=user-id&MediaSourceId=mediasource_6&X-Emby-Client=Emby+Web", io.NopCloser(strings.NewReader(`{}`)))
+	rec := httptest.NewRecorder()
+
+	server.handlePlaybackInfo(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if itemCalls != 0 {
+		t.Fatalf("expected no item metadata calls, got %d", itemCalls)
+	}
+	if playbackInfoCalls != 1 {
+		t.Fatalf("expected one PlaybackInfo call, got %d", playbackInfoCalls)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	source := payload["MediaSources"].([]any)[0].(map[string]any)
+	pathValue, _ := source["Path"].(string)
+	if pathValue != stablePath {
+		t.Fatalf("expected path to remain upstream when web direct play disabled, got %s", pathValue)
+	}
+	if _, ok := source["DirectStreamUrl"]; ok {
+		t.Fatalf("expected no direct stream rewrite when web direct play disabled")
+	}
+}
+
 func TestHandlePlaybackInfoPrefersRequestDerivedPublicURL(t *testing.T) {
 	builder := NewBuilder(config.RedirectConfig{
 		PublicURL:        "http://127.0.0.1:8097",

@@ -179,6 +179,23 @@ func (c *Client) FetchPlaybackInfo(ctx context.Context, requestURI, token string
 	return payload, nil
 }
 
+func (c *Client) FetchItem(ctx context.Context, requestURI, token string) (map[string]any, error) {
+	resp, body, err := c.RawRequest(ctx, http.MethodGet, requestURI, http.Header{
+		"X-Emby-Token": []string{token},
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("item request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode item: %w", err)
+	}
+	return payload, nil
+}
+
 func (c *Client) ResolveRequestURI(requestURI string) *url.URL {
 	return c.resolveRequestURI(requestURI)
 }

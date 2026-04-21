@@ -44,6 +44,8 @@
 
 2. 授权层
    - 客户端请求 Emby `PlaybackInfo` 时，`emby-pro` 拦截并改写返回内容
+   - 如果开启 `OPENLIST_FAST_PLAYBACKINFO=true`，并且当前客户端允许直链播放，`emby-pro` 会直接基于 item 元数据构造最小可用 `PlaybackInfo`
+   - fast path 返回的响应仍会补齐 `PlaySessionId`，以保证后续 `/Sessions/Playing`、播放进度和续播链路可用
    - `emby-pro` 生成短效播放票据 `t`
    - 票据 URL 形态是:
 
@@ -92,6 +94,10 @@
 - 同一个媒体源在 `Path` 和 `DirectStreamUrl` 上出现两套不一致地址
 - 一部分客户端走到了新链路，一部分还停留在旧链路
 
+另外，`PlaybackInfo` 也不能只返回一个“能播起来”的最小壳子。
+
+像 `PlaySessionId` 这样的字段虽然不直接决定播放地址，但会影响 Emby 后续是否能正常接收 `/Sessions/Playing`、写入播放进度和支持续播。也就是说，fast path 可以不完全复制 Emby 原生 `PlaybackInfo`，但不能漏掉播放会话链路依赖的关键字段。
+
 ## `MediaSources.Path` 为什么必须修改
 
 这次讨论里最容易被误解的就是这一点。
@@ -131,6 +137,7 @@
 
 - 仅当当前客户端允许 direct play 时，改写 `MediaSources.Path`
 - 同时把 `DirectStreamUrl` 也改成同一个短效 `/strm/openlist/...?...t=...`
+- 如果客户端不允许 direct play，例如 `OPENLIST_DIRECT_PLAY_WEB=false` 下的 Emby Web，请求会回退到 Emby 原生 `PlaybackInfo`，不会走 fast path，也不会被改写成直链入口
 
 这样 `Path` 和 `DirectStreamUrl` 最终都汇聚到同一个受控入口。
 

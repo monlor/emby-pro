@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/monlor/emby-pro/internal/config"
 	"github.com/monlor/emby-pro/internal/emby"
 	"github.com/monlor/emby-pro/internal/httpx"
@@ -67,6 +68,7 @@ func NewServer(cfg config.RedirectConfig, client *openlist.Client, embyClient *e
 	serverCfg := config.RedirectConfig{
 		DirectPlay:       cfg.DirectPlay,
 		DirectPlayWeb:    cfg.DirectPlayWeb,
+		FastPlaybackInfo: cfg.FastPlaybackInfo,
 		DirectPlayUsers:  cfg.DirectPlayUsers,
 		ListenAddr:       cfg.ListenAddr,
 		PublicURL:        cfg.PublicURL,
@@ -76,14 +78,14 @@ func NewServer(cfg config.RedirectConfig, client *openlist.Client, embyClient *e
 		RoutePrefix:      defaultRoutePrefix(cfg.RoutePrefix),
 	}
 	return &Server{
-		cfg:            serverCfg,
-		client:         client,
-		embyClient:     embyClient,
-		logger:         logger,
-		builder:        NewBuilder(serverCfg),
-		tokenCache:     make(map[string]tokenCacheEntry),
-		tokenTTL:       tokenTTL,
-		proxy:          proxy,
+		cfg:        serverCfg,
+		client:     client,
+		embyClient: embyClient,
+		logger:     logger,
+		builder:    NewBuilder(serverCfg),
+		tokenCache: make(map[string]tokenCacheEntry),
+		tokenTTL:   tokenTTL,
+		proxy:      proxy,
 	}
 }
 
@@ -165,6 +167,38 @@ func (s *Server) isDirectPlayEnabled(r *http.Request) bool {
 	return byID || byName
 }
 
+func (s *Server) isFastPlaybackInfoEnabled(r *http.Request) bool {
+	if !s.cfg.DirectPlay {
+		return false
+	}
+	if isWebClientRequest(r) && !s.cfg.DirectPlayWeb {
+		return false
+	}
+	if len(s.cfg.DirectPlayUsers) == 0 {
+		return true
+	}
+
+	token := extractEmbyToken(r)
+	if token == "" {
+		return false
+	}
+
+	userInfo := s.getCachedUserInfo(token)
+	if userInfo == nil {
+		info, err := s.embyClient.GetUserInfo(r.Context(), token, extractEmbyDeviceID(r))
+		if err != nil {
+			s.logger.Printf("[WARN] get user info for fast playbackinfo check: %v", err)
+			return false
+		}
+		s.cacheTokenWithUser(token, info)
+		userInfo = info
+	}
+
+	_, byID := s.cfg.DirectPlayUsers[userInfo.ID]
+	_, byName := s.cfg.DirectPlayUsers[userInfo.Name]
+	return byID || byName
+}
+
 func (s *Server) handleSTRM(w http.ResponseWriter, r *http.Request) {
 	provider, sourcePath, ok := s.sourcePathFromRoute(r)
 	if !ok || provider != openListProvider {
@@ -188,13 +222,26 @@ func (s *Server) handlePlaybackInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
+	directPlay := s.isDirectPlayEnabled(r)
+	if s.cfg.FastPlaybackInfo && s.isFastPlaybackInfoEnabled(r) {
+		fastBody, handled, err := s.buildFastPlaybackInfo(r)
+		if err != nil {
+			s.logger.Printf("[WARN] fast playbackinfo fallback: %v", err)
+		} else if handled {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(fastBody)
+			return
+		}
+	}
+
 	resp, respBody, err := s.embyClient.RawRequest(r.Context(), r.Method, r.URL.RequestURI(), r.Header, bodyBytes)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 
-	mediaInfo, err := s.maybeRewritePlaybackInfo(r, respBody, s.isDirectPlayEnabled(r))
+	mediaInfo, err := s.maybeRewritePlaybackInfo(r, respBody, directPlay)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -204,6 +251,71 @@ func (s *Server) handlePlaybackInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Del("Content-Length")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(mediaInfo)
+}
+
+func (s *Server) buildFastPlaybackInfo(r *http.Request) ([]byte, bool, error) {
+	token := extractEmbyToken(r)
+	if token == "" {
+		return nil, false, nil
+	}
+
+	itemID := extractItemID(r.URL.Path)
+	if itemID == "" {
+		return nil, false, nil
+	}
+
+	itemRequestURI := buildItemRequestURI(r, itemID)
+	itemPayload, err := s.embyClient.FetchItem(r.Context(), itemRequestURI, token)
+	if err != nil {
+		return nil, false, err
+	}
+
+	sources, ok := itemPayload["MediaSources"].([]any)
+	if !ok || len(sources) == 0 {
+		return nil, false, fmt.Errorf("item payload missing mediasources")
+	}
+
+	filteredSources := filterMediaSourcesByID(sources, strings.TrimSpace(r.URL.Query().Get("MediaSourceId")))
+	if len(filteredSources) == 0 {
+		return nil, false, fmt.Errorf("no mediasource matched request")
+	}
+
+	chapters, _ := itemPayload["Chapters"].([]any)
+	managed := false
+	for _, rawSource := range filteredSources {
+		source, ok := rawSource.(map[string]any)
+		if !ok {
+			continue
+		}
+		if len(chapters) > 0 {
+			if _, hasChapters := source["Chapters"]; !hasChapters {
+				source["Chapters"] = chapters
+			}
+		}
+		pathValue, _ := source["Path"].(string)
+		managedSource, _, ok := s.resolveManagedMediaPath(pathValue)
+		if ok && managedSource != "" {
+			managed = true
+		}
+	}
+	if !managed {
+		return nil, false, nil
+	}
+
+	payload := map[string]any{
+		"MediaSources":   filteredSources,
+		"PlaySessionId": uuid.NewString(),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, err
+	}
+
+	rewritten, err := s.maybeRewritePlaybackInfo(r, body, true)
+	if err != nil {
+		return nil, false, err
+	}
+	return rewritten, true, nil
 }
 
 func (s *Server) redirectToTarget(w http.ResponseWriter, r *http.Request, provider, sourcePath string) {
@@ -324,6 +436,40 @@ func (s *Server) maybeRewritePlaybackInfo(r *http.Request, body []byte, directPl
 		return body, nil
 	}
 	return json.Marshal(payload)
+}
+
+func buildItemRequestURI(r *http.Request, itemID string) string {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return ""
+	}
+
+	prefix := requestPathPrefix(r.URL.Path)
+	fields := "MediaSources,Chapters,Path,MediaStreams,RunTimeTicks"
+	userID := strings.TrimSpace(r.URL.Query().Get("UserId"))
+	if userID != "" {
+		return fmt.Sprintf("%s/Users/%s/Items/%s?Fields=%s", prefix, url.PathEscape(userID), url.PathEscape(itemID), url.QueryEscape(fields))
+	}
+	return fmt.Sprintf("%s/Items/%s?Fields=%s", prefix, url.PathEscape(itemID), url.QueryEscape(fields))
+}
+
+func filterMediaSourcesByID(sources []any, mediaSourceID string) []any {
+	if mediaSourceID == "" {
+		return sources
+	}
+
+	filtered := make([]any, 0, 1)
+	for _, rawSource := range sources {
+		source, ok := rawSource.(map[string]any)
+		if !ok {
+			continue
+		}
+		sourceID, _ := source["Id"].(string)
+		if strings.EqualFold(sourceID, mediaSourceID) {
+			filtered = append(filtered, source)
+		}
+	}
+	return filtered
 }
 
 func (s *Server) resolveManagedMediaPath(pathValue string) (managedSource string, directRemote string, ok bool) {
