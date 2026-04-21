@@ -168,35 +168,7 @@ func (s *Server) isDirectPlayEnabled(r *http.Request) bool {
 }
 
 func (s *Server) isFastPlaybackInfoEnabled(r *http.Request) bool {
-	if !s.cfg.DirectPlay {
-		return false
-	}
-	if isWebClientRequest(r) && !s.cfg.DirectPlayWeb {
-		return false
-	}
-	if len(s.cfg.DirectPlayUsers) == 0 {
-		return true
-	}
-
-	token := extractEmbyToken(r)
-	if token == "" {
-		return false
-	}
-
-	userInfo := s.getCachedUserInfo(token)
-	if userInfo == nil {
-		info, err := s.embyClient.GetUserInfo(r.Context(), token, extractEmbyDeviceID(r))
-		if err != nil {
-			s.logger.Printf("[WARN] get user info for fast playbackinfo check: %v", err)
-			return false
-		}
-		s.cacheTokenWithUser(token, info)
-		userInfo = info
-	}
-
-	_, byID := s.cfg.DirectPlayUsers[userInfo.ID]
-	_, byName := s.cfg.DirectPlayUsers[userInfo.Name]
-	return byID || byName
+	return s.isDirectPlayEnabled(r)
 }
 
 func (s *Server) handleSTRM(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +195,7 @@ func (s *Server) handlePlaybackInfo(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	directPlay := s.isDirectPlayEnabled(r)
-	if s.cfg.FastPlaybackInfo && s.isFastPlaybackInfoEnabled(r) {
+	if directPlay && s.cfg.FastPlaybackInfo && s.isFastPlaybackInfoEnabled(r) {
 		fastBody, handled, err := s.buildFastPlaybackInfo(r)
 		if err != nil {
 			s.logger.Printf("[WARN] fast playbackinfo fallback: %v", err)
