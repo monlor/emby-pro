@@ -154,16 +154,26 @@ func (s *Syncer) bootstrap() error {
 
 func (s *Syncer) runCycle(ctx context.Context) error {
 	now := time.Now()
+	if err := s.reconcileFullRescans(now); err != nil {
+		return err
+	}
+
 	for _, rule := range s.cfg.Rules {
 		shouldRescan, err := s.store.ShouldScheduleFullRescan(rule.Name, s.cfg.Sync.FullRescanInterval, now)
 		if err != nil {
 			return fmt.Errorf("check full rescan for %s: %w", rule.Name, err)
 		}
 		if shouldRescan {
-			if err := s.store.ScheduleFullRescan(rule.Name, now); err != nil {
+			scheduled, pending, err := s.store.RequestFullRescan(rule.Name, now)
+			if err != nil {
 				return fmt.Errorf("schedule full rescan for %s: %w", rule.Name, err)
 			}
-			s.debugf("scheduled full rescan for rule=%s", rule.Name)
+			switch {
+			case scheduled:
+				s.debugf("scheduled full rescan for rule=%s", rule.Name)
+			case pending:
+				s.debugf("queued pending full rescan for rule=%s", rule.Name)
+			}
 		}
 	}
 
@@ -217,7 +227,29 @@ func (s *Syncer) runCycle(ctx context.Context) error {
 		}
 	}
 
+	if err := s.reconcileFullRescans(time.Now()); err != nil {
+		return err
+	}
+
 	s.infof("cycle complete processed_dirs=%d remaining_request_budget=%d", processed, requestBudget)
+	return nil
+}
+
+func (s *Syncer) reconcileFullRescans(now time.Time) error {
+	for _, rule := range s.cfg.Rules {
+		completed, startedPending, err := s.store.AdvanceFullRescan(rule.Name, now)
+		if err != nil {
+			return fmt.Errorf("advance full rescan for %s: %w", rule.Name, err)
+		}
+		if !completed {
+			continue
+		}
+		if startedPending {
+			s.debugf("started pending full rescan for rule=%s", rule.Name)
+			continue
+		}
+		s.debugf("completed full rescan for rule=%s", rule.Name)
+	}
 	return nil
 }
 

@@ -788,7 +788,7 @@ func loadSyncProfilePreset() (syncProfilePreset, error) {
 		return syncProfilePreset{
 			RateLimitQPS:        0.2,
 			RateLimitBurst:      1,
-			FullRescanInterval:  168 * time.Hour,
+			FullRescanInterval:  24 * time.Hour,
 			MaxDirsPerCycle:     20,
 			MaxRequestsPerCycle: 60,
 			HotInterval:         30 * time.Minute,
@@ -806,7 +806,7 @@ func loadSyncProfilePreset() (syncProfilePreset, error) {
 		return syncProfilePreset{
 			RateLimitQPS:        0.5,
 			RateLimitBurst:      1,
-			FullRescanInterval:  72 * time.Hour,
+			FullRescanInterval:  12 * time.Hour,
 			MaxDirsPerCycle:     50,
 			MaxRequestsPerCycle: 150,
 			HotInterval:         20 * time.Minute,
@@ -824,7 +824,7 @@ func loadSyncProfilePreset() (syncProfilePreset, error) {
 		return syncProfilePreset{
 			RateLimitQPS:        1,
 			RateLimitBurst:      2,
-			FullRescanInterval:  24 * time.Hour,
+			FullRescanInterval:  6 * time.Hour,
 			MaxDirsPerCycle:     100,
 			MaxRequestsPerCycle: 300,
 			HotInterval:         10 * time.Minute,

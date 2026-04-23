@@ -216,7 +216,7 @@ OpenList 保守同步推荐：
 - 或者不使用 profile，直接手动设置下面这些值
 - `OPENLIST_RATE_LIMIT_QPS=0.2`
 - `OPENLIST_RATE_LIMIT_BURST=1`
-- `STRM_FULL_RESCAN_INTERVAL=168h`
+- `STRM_FULL_RESCAN_INTERVAL=24h`
 - `STRM_MAX_DIRS_PER_CYCLE=20`
 - `STRM_MAX_REQUESTS_PER_CYCLE=60`
 - `STRM_HOT_INTERVAL=30m`
@@ -234,9 +234,9 @@ OpenList 保守同步推荐：
 
 | Profile | `OPENLIST_RATE_LIMIT_QPS` | `OPENLIST_RATE_LIMIT_BURST` | `STRM_FULL_RESCAN_INTERVAL` | `STRM_MAX_DIRS_PER_CYCLE` | `STRM_MAX_REQUESTS_PER_CYCLE` | `STRM_HOT_INTERVAL` | `STRM_WARM_INTERVAL` | `STRM_COLD_INTERVAL` | `STRM_HOT_JITTER` | `STRM_WARM_JITTER` | `STRM_COLD_JITTER` | `STRM_UNCHANGED_TO_WARM` | `STRM_UNCHANGED_TO_COLD` | `STRM_FAILURE_BACKOFF_MAX` | `STRM_RULE_COOLDOWN` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conservative` | `0.2` | `1` | `168h` | `20` | `60` | `30m` | `6h` | `24h` | `10m` | `1h` | `4h` | `3` | `7` | `24h` | `6h` |
-| `balanced` | `0.5` | `1` | `72h` | `50` | `150` | `20m` | `4h` | `12h` | `5m` | `30m` | `2h` | `3` | `6` | `12h` | `4h` |
-| `aggressive` | `1` | `2` | `24h` | `100` | `300` | `10m` | `2h` | `6h` | `2m` | `15m` | `1h` | `2` | `5` | `6h` | `2h` |
+| `conservative` | `0.2` | `1` | `24h` | `20` | `60` | `30m` | `6h` | `24h` | `10m` | `1h` | `4h` | `3` | `7` | `24h` | `6h` |
+| `balanced` | `0.5` | `1` | `12h` | `50` | `150` | `20m` | `4h` | `12h` | `5m` | `30m` | `2h` | `3` | `6` | `12h` | `4h` |
+| `aggressive` | `1` | `2` | `6h` | `100` | `300` | `10m` | `2h` | `6h` | `2m` | `15m` | `1h` | `2` | `5` | `6h` | `2h` |
 
 覆盖示例：
 

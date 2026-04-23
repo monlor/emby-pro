@@ -44,6 +44,115 @@ func TestScheduleFullRescanOnlyQueuesRoot(t *testing.T) {
 	}
 }
 
+func TestRequestFullRescanQueuesPendingWhenActive(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	rule := config.Rule{Name: "media", SourcePath: "/media", TargetPath: "/strm/media"}
+	if err := store.EnsureRule(rule, now); err != nil {
+		t.Fatalf("EnsureRule() error = %v", err)
+	}
+	if _, _, err := store.RequestFullRescan(rule.Name, now); err != nil {
+		t.Fatalf("RequestFullRescan() error = %v", err)
+	}
+
+	scheduled, pending, err := store.RequestFullRescan(rule.Name, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("RequestFullRescan() second error = %v", err)
+	}
+	if scheduled {
+		t.Fatalf("expected no new active rescan while one is running")
+	}
+	if !pending {
+		t.Fatalf("expected request to be queued as pending")
+	}
+
+	states, err := store.ListRuleStates()
+	if err != nil {
+		t.Fatalf("ListRuleStates() error = %v", err)
+	}
+	if len(states) != 1 {
+		t.Fatalf("expected 1 rule state, got %d", len(states))
+	}
+	if !states[0].FullRescanActive {
+		t.Fatalf("expected active full rescan")
+	}
+	if !states[0].PendingFullRescan {
+		t.Fatalf("expected pending full rescan")
+	}
+}
+
+func TestAdvanceFullRescanStartsPendingRunImmediatelyAfterCompletion(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	rule := config.Rule{Name: "media", SourcePath: "/media", TargetPath: "/strm/media"}
+	if err := store.EnsureRule(rule, now); err != nil {
+		t.Fatalf("EnsureRule() error = %v", err)
+	}
+	if err := store.UpsertDir(rule.Name, "/media/movies", "/media", 1, now); err != nil {
+		t.Fatalf("UpsertDir() error = %v", err)
+	}
+	if _, _, err := store.RequestFullRescan(rule.Name, now); err != nil {
+		t.Fatalf("RequestFullRescan() error = %v", err)
+	}
+	if _, _, err := store.RequestFullRescan(rule.Name, now.Add(time.Hour)); err != nil {
+		t.Fatalf("RequestFullRescan() pending error = %v", err)
+	}
+
+	firstPassDoneAt := now.Add(10 * time.Minute)
+	if err := store.MarkDirScannedSuccess(rule.Name, rule.SourcePath, firstPassDoneAt.Add(time.Hour), firstPassDoneAt, 0, "changed", 0, firstPassDoneAt); err != nil {
+		t.Fatalf("MarkDirScannedSuccess(root) error = %v", err)
+	}
+	if err := store.MarkDirScannedSuccess(rule.Name, "/media/movies", firstPassDoneAt.Add(time.Hour), firstPassDoneAt, 0, "changed", 0, firstPassDoneAt); err != nil {
+		t.Fatalf("MarkDirScannedSuccess(child) error = %v", err)
+	}
+
+	completed, startedPending, err := store.AdvanceFullRescan(rule.Name, firstPassDoneAt)
+	if err != nil {
+		t.Fatalf("AdvanceFullRescan() error = %v", err)
+	}
+	if !completed {
+		t.Fatalf("expected previous full rescan to complete")
+	}
+	if !startedPending {
+		t.Fatalf("expected pending full rescan to start immediately")
+	}
+
+	states, err := store.ListRuleStates()
+	if err != nil {
+		t.Fatalf("ListRuleStates() error = %v", err)
+	}
+	if len(states) != 1 {
+		t.Fatalf("expected 1 rule state, got %d", len(states))
+	}
+	if !states[0].FullRescanActive {
+		t.Fatalf("expected new full rescan to remain active")
+	}
+	if states[0].PendingFullRescan {
+		t.Fatalf("expected pending flag to be cleared after restart")
+	}
+	if !states[0].LastFullRescanAt.Equal(firstPassDoneAt.Truncate(time.Second)) {
+		t.Fatalf("last full rescan at = %s, want %s", states[0].LastFullRescanAt, firstPassDoneAt.Truncate(time.Second))
+	}
+
+	dirs, err := store.DueDirs(10, firstPassDoneAt)
+	if err != nil {
+		t.Fatalf("DueDirs() error = %v", err)
+	}
+	if len(dirs) == 0 || dirs[0].SourcePath != rule.SourcePath {
+		t.Fatalf("expected root to be due for the restarted full rescan")
+	}
+}
+
 func TestDueDirsHonorsRuleCooldownAndSeedOrder(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "index.db"))
 	if err != nil {

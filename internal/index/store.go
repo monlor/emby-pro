@@ -49,12 +49,15 @@ type FileRecord struct {
 }
 
 type RuleState struct {
-	RuleName         string
-	RootPath         string
-	TargetRoot       string
-	LastFullRescanAt time.Time
-	ScheduleSeed     int64
-	CooldownUntil    time.Time
+	RuleName                  string
+	RootPath                  string
+	TargetRoot                string
+	LastFullRescanAt          time.Time
+	LastFullRescanCompletedAt time.Time
+	FullRescanActive          bool
+	PendingFullRescan         bool
+	ScheduleSeed              int64
+	CooldownUntil             time.Time
 }
 
 func Open(dbPath string) (*Store, error) {
@@ -105,6 +108,9 @@ func Open(dbPath string) (*Store, error) {
 				root_path TEXT NOT NULL,
 				target_root TEXT NOT NULL DEFAULT '',
 				last_full_rescan_at INTEGER NOT NULL DEFAULT 0,
+				last_full_rescan_completed_at INTEGER NOT NULL DEFAULT 0,
+				full_rescan_active INTEGER NOT NULL DEFAULT 0,
+				pending_full_rescan INTEGER NOT NULL DEFAULT 0,
 				schedule_seed INTEGER NOT NULL DEFAULT 0,
 				cooldown_until INTEGER NOT NULL DEFAULT 0
 			);`,
@@ -125,6 +131,9 @@ func Open(dbPath string) (*Store, error) {
 		`ALTER TABLE dirs ADD COLUMN last_entry_count INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE dirs ADD COLUMN cooldown_until INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE dirs ADD COLUMN last_result TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE rule_state ADD COLUMN last_full_rescan_completed_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE rule_state ADD COLUMN full_rescan_active INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE rule_state ADD COLUMN pending_full_rescan INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE rule_state ADD COLUMN schedule_seed INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE rule_state ADD COLUMN cooldown_until INTEGER NOT NULL DEFAULT 0`,
 	} {
@@ -153,8 +162,8 @@ func (s *Store) EnsureRule(rule config.Rule, now time.Time) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		`INSERT INTO rule_state(rule_name, root_path, target_root, last_full_rescan_at, schedule_seed, cooldown_until)
-		 VALUES (?, ?, ?, 0, ?, 0)
+		`INSERT INTO rule_state(rule_name, root_path, target_root, last_full_rescan_at, last_full_rescan_completed_at, full_rescan_active, pending_full_rescan, schedule_seed, cooldown_until)
+		 VALUES (?, ?, ?, 0, 0, 0, 0, ?, 0)
 		 ON CONFLICT(rule_name) DO UPDATE SET
 		   root_path = excluded.root_path,
 		   target_root = excluded.target_root,
@@ -457,7 +466,7 @@ func (s *Store) DeleteDirSubtree(ruleName, dirPath string) error {
 }
 
 func (s *Store) ListRuleStates() ([]RuleState, error) {
-	rows, err := s.db.Query(`SELECT rule_name, root_path, target_root, last_full_rescan_at, schedule_seed, cooldown_until FROM rule_state ORDER BY rule_name ASC`)
+	rows, err := s.db.Query(`SELECT rule_name, root_path, target_root, last_full_rescan_at, last_full_rescan_completed_at, full_rescan_active, pending_full_rescan, schedule_seed, cooldown_until FROM rule_state ORDER BY rule_name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -466,11 +475,15 @@ func (s *Store) ListRuleStates() ([]RuleState, error) {
 	var states []RuleState
 	for rows.Next() {
 		var state RuleState
-		var lastFullRescanAt, cooldownUntil int64
-		if err := rows.Scan(&state.RuleName, &state.RootPath, &state.TargetRoot, &lastFullRescanAt, &state.ScheduleSeed, &cooldownUntil); err != nil {
+		var lastFullRescanAt, lastFullRescanCompletedAt, cooldownUntil int64
+		var fullRescanActive, pendingFullRescan int
+		if err := rows.Scan(&state.RuleName, &state.RootPath, &state.TargetRoot, &lastFullRescanAt, &lastFullRescanCompletedAt, &fullRescanActive, &pendingFullRescan, &state.ScheduleSeed, &cooldownUntil); err != nil {
 			return nil, err
 		}
 		state.LastFullRescanAt = unixToTime(lastFullRescanAt)
+		state.LastFullRescanCompletedAt = unixToTime(lastFullRescanCompletedAt)
+		state.FullRescanActive = fullRescanActive != 0
+		state.PendingFullRescan = pendingFullRescan != 0
 		state.CooldownUntil = unixToTime(cooldownUntil)
 		states = append(states, state)
 	}
@@ -522,37 +535,139 @@ func (s *Store) DeleteRule(ruleName string) error {
 }
 
 func (s *Store) ShouldScheduleFullRescan(ruleName string, interval time.Duration, now time.Time) (bool, error) {
-	row := s.db.QueryRow(`SELECT last_full_rescan_at FROM rule_state WHERE rule_name = ?`, ruleName)
-	var lastFull int64
-	if err := row.Scan(&lastFull); err != nil {
+	row := s.db.QueryRow(`SELECT last_full_rescan_at, last_full_rescan_completed_at FROM rule_state WHERE rule_name = ?`, ruleName)
+	var lastFull, lastCompleted int64
+	if err := row.Scan(&lastFull, &lastCompleted); err != nil {
 		return false, err
 	}
-	if lastFull == 0 {
+	referenceAt := lastFull
+	if lastCompleted > 0 {
+		referenceAt = lastCompleted
+	}
+	if referenceAt == 0 {
 		return true, nil
 	}
-	return now.Sub(time.Unix(lastFull, 0)) >= interval, nil
+	return now.Sub(time.Unix(referenceAt, 0)) >= interval, nil
 }
 
 func (s *Store) ScheduleFullRescan(ruleName string, now time.Time) error {
+	_, _, err := s.RequestFullRescan(ruleName, now)
+	return err
+}
+
+func (s *Store) RequestFullRescan(ruleName string, now time.Time) (scheduled bool, pending bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return false, false, err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`UPDATE rule_state SET last_full_rescan_at = ? WHERE rule_name = ?`, now.Unix(), ruleName); err != nil {
-		return err
+	var rootPath string
+	var fullRescanActive, pendingFullRescan int
+	if err := tx.QueryRow(`SELECT root_path, full_rescan_active, pending_full_rescan FROM rule_state WHERE rule_name = ?`, ruleName).Scan(&rootPath, &fullRescanActive, &pendingFullRescan); err != nil {
+		return false, false, err
+	}
+
+	if fullRescanActive != 0 {
+		if pendingFullRescan != 0 {
+			return false, false, tx.Commit()
+		}
+		if _, err := tx.Exec(`UPDATE rule_state SET pending_full_rescan = 1 WHERE rule_name = ?`, ruleName); err != nil {
+			return false, false, err
+		}
+		return false, true, tx.Commit()
+	}
+
+	if _, err := tx.Exec(`UPDATE rule_state SET last_full_rescan_at = ?, full_rescan_active = 1, pending_full_rescan = 0 WHERE rule_name = ?`, now.Unix(), ruleName); err != nil {
+		return false, false, err
 	}
 	if _, err := tx.Exec(
 		`UPDATE dirs
 		    SET next_scan_at = MIN(next_scan_at, ?)
 		  WHERE rule_name = ?
-		    AND source_path = (SELECT root_path FROM rule_state WHERE rule_name = ?)`,
-		now.Unix(), ruleName, ruleName,
+		    AND source_path = ?`,
+		now.Unix(), ruleName, rootPath,
 	); err != nil {
-		return err
+		return false, false, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, false, err
+	}
+	return true, false, nil
+}
+
+func (s *Store) AdvanceFullRescan(ruleName string, now time.Time) (completed bool, startedPending bool, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, false, err
+	}
+	defer tx.Rollback()
+
+	var rootPath string
+	var lastFullRescanAt int64
+	var fullRescanActive, pendingFullRescan int
+	if err := tx.QueryRow(
+		`SELECT root_path, last_full_rescan_at, full_rescan_active, pending_full_rescan
+		   FROM rule_state
+		  WHERE rule_name = ?`,
+		ruleName,
+	).Scan(&rootPath, &lastFullRescanAt, &fullRescanActive, &pendingFullRescan); err != nil {
+		return false, false, err
+	}
+	if fullRescanActive == 0 || lastFullRescanAt == 0 {
+		return false, false, tx.Commit()
+	}
+
+	var remaining int
+	if err := tx.QueryRow(
+		`SELECT COUNT(1)
+		   FROM dirs
+		  WHERE rule_name = ?
+		    AND last_scan_at < ?`,
+		ruleName, lastFullRescanAt,
+	).Scan(&remaining); err != nil {
+		return false, false, err
+	}
+	if remaining > 0 {
+		return false, false, tx.Commit()
+	}
+
+	if pendingFullRescan != 0 {
+		if _, err := tx.Exec(
+			`UPDATE rule_state
+			    SET last_full_rescan_at = ?, last_full_rescan_completed_at = ?, pending_full_rescan = 0, full_rescan_active = 1
+			  WHERE rule_name = ?`,
+			now.Unix(), now.Unix(), ruleName,
+		); err != nil {
+			return false, false, err
+		}
+		if _, err := tx.Exec(
+			`UPDATE dirs
+			    SET next_scan_at = MIN(next_scan_at, ?)
+			  WHERE rule_name = ?
+			    AND source_path = ?`,
+			now.Unix(), ruleName, rootPath,
+		); err != nil {
+			return false, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return false, false, err
+		}
+		return true, true, nil
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE rule_state
+		    SET full_rescan_active = 0, last_full_rescan_completed_at = ?
+		  WHERE rule_name = ?`,
+		now.Unix(), ruleName,
+	); err != nil {
+		return false, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, false, err
+	}
+	return true, false, nil
 }
 
 func (s *Store) SetRuleCooldown(ruleName string, cooldownUntil time.Time) error {

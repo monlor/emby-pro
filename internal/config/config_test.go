@@ -313,6 +313,9 @@ func TestLoadSupportsSyncProfilePreset(t *testing.T) {
 	if got, want := cfg.Sync.MaxRequestsPerCycle, 60; got != want {
 		t.Fatalf("max requests per cycle = %d, want %d", got, want)
 	}
+	if got, want := cfg.Sync.FullRescanInterval, 24*time.Hour; got != want {
+		t.Fatalf("full rescan interval = %s, want %s", got, want)
+	}
 }
 
 func TestLoadAllowsExplicitOverridesOnTopOfSyncProfile(t *testing.T) {
