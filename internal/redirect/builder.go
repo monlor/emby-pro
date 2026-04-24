@@ -28,10 +28,9 @@ type playTicketClaims struct {
 }
 
 type Builder struct {
-	publicURL    *url.URL
-	secret       []byte
-	pathMappings []config.PathMapping
-	routePrefix  string
+	publicURL   *url.URL
+	secret      []byte
+	routePrefix string
 }
 
 func NewBuilder(cfg config.RedirectConfig) *Builder {
@@ -43,10 +42,9 @@ func NewBuilder(cfg config.RedirectConfig) *Builder {
 		return nil
 	}
 	return &Builder{
-		publicURL:    u,
-		secret:       []byte(cfg.PlayTicketSecret),
-		pathMappings: cfg.PathMappings,
-		routePrefix:  defaultRoutePrefix(cfg.RoutePrefix),
+		publicURL:   u,
+		secret:      []byte(cfg.PlayTicketSecret),
+		routePrefix: defaultRoutePrefix(cfg.RoutePrefix),
 	}
 }
 
@@ -164,7 +162,7 @@ func (b *Builder) buildManagedURL(provider, sourcePath string) url.URL {
 }
 
 func (b *Builder) buildManagedURLForPublicURL(publicURL *url.URL, provider, sourcePath string) url.URL {
-	publicPath := config.MapSourceToPublicPath(b.pathMappings, sourcePath)
+	publicPath := pathutil.NormalizeSourcePath(sourcePath)
 
 	u := *publicURL
 	basePath := strings.TrimSuffix(publicURL.Path, "/")

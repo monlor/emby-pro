@@ -36,14 +36,37 @@ func NewClient(cfg config.EmbyConfig) (*Client, error) {
 }
 
 type UserInfo struct {
-	ID   string
-	Name string
+	ID      string
+	Name    string
+	IsAdmin bool
+}
+
+type UserSummary struct {
+	ID      string
+	Name    string
+	IsAdmin bool
+}
+
+type currentUserInfo struct {
+	ID     string `json:"Id"`
+	Name   string `json:"Name"`
+	Policy struct {
+		IsAdministrator bool `json:"IsAdministrator"`
+	} `json:"Policy"`
 }
 
 type SessionInfo struct {
 	UserID   string `json:"UserId"`
 	UserName string `json:"UserName"`
 	DeviceID string `json:"DeviceId"`
+}
+
+type listUserInfo struct {
+	ID     string `json:"Id"`
+	Name   string `json:"Name"`
+	Policy struct {
+		IsAdministrator bool `json:"IsAdministrator"`
+	} `json:"Policy"`
 }
 
 func (c *Client) GetUserInfo(ctx context.Context, token, deviceID string) (*UserInfo, error) {
@@ -74,30 +97,100 @@ func (c *Client) GetUserInfo(ctx context.Context, token, deviceID string) (*User
 	}
 
 	deviceID = strings.TrimSpace(deviceID)
+	var user *UserInfo
 	if deviceID != "" {
 		for _, session := range sessions {
 			if session.DeviceID == deviceID && session.UserID != "" && session.UserName != "" {
-				return &UserInfo{ID: session.UserID, Name: session.UserName}, nil
+				user = &UserInfo{ID: session.UserID, Name: session.UserName}
+				break
 			}
 		}
 	}
+	if user == nil {
+		users := make(map[string]UserInfo)
+		for _, session := range sessions {
+			if session.UserID == "" || session.UserName == "" {
+				continue
+			}
+			users[session.UserID] = UserInfo{ID: session.UserID, Name: session.UserName}
+		}
+		if len(users) == 1 {
+			for _, item := range users {
+				user = &item
+			}
+		} else if len(users) == 0 {
+			return nil, fmt.Errorf("emby user info failed: no user session found")
+		} else {
+			return nil, fmt.Errorf("emby user info failed: multiple user sessions visible; device id required")
+		}
+	}
 
-	users := make(map[string]UserInfo)
-	for _, session := range sessions {
-		if session.UserID == "" || session.UserName == "" {
+	userURL := c.resolveURL("/Users/" + url.PathEscape(user.ID))
+	q = userURL.Query()
+	q.Set("api_key", token)
+	userURL.RawQuery = q.Encode()
+
+	userReq, err := http.NewRequestWithContext(ctx, http.MethodGet, userURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build emby user request: %w", err)
+	}
+	userResp, err := c.httpClient.Do(userReq)
+	if err != nil {
+		return nil, fmt.Errorf("emby user request failed: %w", err)
+	}
+	defer userResp.Body.Close()
+	if userResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(userResp.Body, 512))
+		return nil, fmt.Errorf("emby user request failed: status=%d body=%s", userResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var detail currentUserInfo
+	if err := json.NewDecoder(userResp.Body).Decode(&detail); err != nil {
+		return nil, fmt.Errorf("decode emby user: %w", err)
+	}
+	user.IsAdmin = detail.Policy.IsAdministrator
+	return user, nil
+}
+
+func (c *Client) ListUsers(ctx context.Context, token string) ([]UserSummary, error) {
+	usersURL := c.resolveURL("/Users")
+	q := usersURL.Query()
+	q.Set("api_key", token)
+	usersURL.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, usersURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build emby users request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("emby users request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("emby users request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var payload []listUserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode emby users: %w", err)
+	}
+
+	users := make([]UserSummary, 0, len(payload))
+	for _, item := range payload {
+		if item.ID == "" || item.Name == "" {
 			continue
 		}
-		users[session.UserID] = UserInfo{ID: session.UserID, Name: session.UserName}
+		users = append(users, UserSummary{
+			ID:      item.ID,
+			Name:    item.Name,
+			IsAdmin: item.Policy.IsAdministrator,
+		})
 	}
-	if len(users) == 1 {
-		for _, user := range users {
-			return &user, nil
-		}
-	}
-	if len(users) == 0 {
-		return nil, fmt.Errorf("emby user info failed: no user session found")
-	}
-	return nil, fmt.Errorf("emby user info failed: multiple user sessions visible; device id required")
+	return users, nil
 }
 
 func (c *Client) ValidateToken(ctx context.Context, token string) error {

@@ -14,6 +14,7 @@ import (
 	"github.com/monlor/emby-pro/internal/config"
 	"github.com/monlor/emby-pro/internal/index"
 	"github.com/monlor/emby-pro/internal/openlist"
+	"github.com/monlor/emby-pro/internal/redirect"
 )
 
 func newAdaptiveRunOnceConfig(tempDir, serverURL string) config.Config {
@@ -492,9 +493,8 @@ func TestRunOncePathMappingChangeKeepsHotWhenSTRMContentChanges(t *testing.T) {
 	}
 
 	forceRootDirDueNow(t, store)
-	s.cfg.Redirect.PathMappings = []config.PathMapping{
-		{SourcePrefix: "/media", PublicPrefix: "/public/media"},
-	}
+	s.cfg.Redirect.PublicURL = "http://127.0.0.1:19097"
+	s.redir = redirect.NewBuilder(s.cfg.Redirect)
 	if err := s.RunOnce(context.Background()); err != nil {
 		t.Fatalf("second RunOnce() error = %v", err)
 	}
@@ -515,7 +515,7 @@ func TestRunOncePathMappingChangeKeepsHotWhenSTRMContentChanges(t *testing.T) {
 		t.Fatalf("ReadFile(after) error = %v", err)
 	}
 	if string(before) == string(after) {
-		t.Fatalf("expected .strm content to change after path mapping update")
+		t.Fatalf("expected .strm content to change after redirect public url update")
 	}
 }
 

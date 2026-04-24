@@ -584,9 +584,8 @@ func (s *Store) RequestFullRescan(ruleName string, now time.Time) (scheduled boo
 	if _, err := tx.Exec(
 		`UPDATE dirs
 		    SET next_scan_at = MIN(next_scan_at, ?)
-		  WHERE rule_name = ?
-		    AND source_path = ?`,
-		now.Unix(), ruleName, rootPath,
+		  WHERE rule_name = ?`,
+		now.Unix(), ruleName,
 	); err != nil {
 		return false, false, err
 	}
@@ -644,9 +643,8 @@ func (s *Store) AdvanceFullRescan(ruleName string, now time.Time) (completed boo
 		if _, err := tx.Exec(
 			`UPDATE dirs
 			    SET next_scan_at = MIN(next_scan_at, ?)
-			  WHERE rule_name = ?
-			    AND source_path = ?`,
-			now.Unix(), ruleName, rootPath,
+			  WHERE rule_name = ?`,
+			now.Unix(), ruleName,
 		); err != nil {
 			return false, false, err
 		}

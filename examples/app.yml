@@ -1,0 +1,57 @@
+openlist:
+  base_url: https://list.example.com
+  public_url: https://list-public.example.com
+  username: your-openlist-user
+  password: your-openlist-password
+
+emby:
+  base_url: http://127.0.0.1:8096
+
+redirect:
+  direct_play: true
+  direct_play_web: false
+  fast_playback_info: false
+  public_url: http://127.0.0.1:28096
+  play_ticket_ttl: 12h
+  route_prefix: /strm
+
+sync:
+  base_dir: /strm
+  index_db: /config/strm-index.db
+  full_rescan_interval: 24h
+  max_dirs_per_cycle: 200
+  max_requests_per_cycle: 1000
+  min_file_size: 15728640
+  video_exts:
+    - .mp4
+    - .mkv
+    - .avi
+    - .ts
+    - .mov
+  clean_removed: true
+  overwrite: false
+  log_level: info
+  hot_interval: 30m
+  warm_interval: 6h
+  cold_interval: 24h
+  hot_jitter: 10m
+  warm_jitter: 1h
+  cold_jitter: 4h
+  unchanged_to_warm: 3
+  unchanged_to_cold: 7
+  failure_backoff_max: 24h
+  rule_cooldown: 6h
+
+rules:
+  - name: movies
+    source_path: /movies
+    target_path: /strm/movies
+    flatten: false
+    clean_removed: true
+    overwrite: true
+  - name: tv
+    source_path: /tv
+    target_path: /strm/tv
+    flatten: false
+    clean_removed: true
+    overwrite: true

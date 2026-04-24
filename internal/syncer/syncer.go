@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/monlor/emby-pro/internal/config"
@@ -23,13 +24,16 @@ import (
 const minRunSleep = time.Second
 
 type Syncer struct {
-	cfg    config.Config
-	store  *index.Store
-	client *openlist.Client
-	logger *log.Logger
-	rules  map[string]config.Rule
-	redir  *redirect.Builder
-	rng    *rand.Rand
+	cfg                 config.Config
+	store               *index.Store
+	client              *openlist.Client
+	logger              *log.Logger
+	rules               map[string]config.Rule
+	redir               *redirect.Builder
+	rng                 *rand.Rand
+	wakeCh              chan struct{}
+	forceMu             sync.RWMutex
+	forceOverwriteRules map[string]struct{}
 }
 
 type fileWrite struct {
@@ -48,14 +52,56 @@ func New(cfg config.Config, store *index.Store, client *openlist.Client) *Syncer
 		rules[rule.Name] = rule
 	}
 	return &Syncer{
-		cfg:    cfg,
-		store:  store,
-		client: client,
-		logger: log.New(os.Stdout, "[emby-pro] ", log.LstdFlags),
-		rules:  rules,
-		redir:  redirect.NewBuilder(cfg.Redirect),
-		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
+		cfg:                 cfg,
+		store:               store,
+		client:              client,
+		logger:              log.New(os.Stdout, "[emby-pro] ", log.LstdFlags),
+		rules:               rules,
+		redir:               redirect.NewBuilder(cfg.Redirect),
+		rng:                 rand.New(rand.NewSource(time.Now().UnixNano())),
+		wakeCh:              make(chan struct{}, 1),
+		forceOverwriteRules: make(map[string]struct{}),
 	}
+}
+
+func (s *Syncer) SetLogger(logger *log.Logger) {
+	if logger != nil {
+		s.logger = logger
+	}
+}
+
+func (s *Syncer) Wake() {
+	select {
+	case s.wakeCh <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Syncer) ForceOverwriteRule(ruleName string) {
+	s.forceMu.Lock()
+	defer s.forceMu.Unlock()
+	s.forceOverwriteRules[ruleName] = struct{}{}
+}
+
+func (s *Syncer) ForceOverwriteAll() {
+	s.forceMu.Lock()
+	defer s.forceMu.Unlock()
+	for ruleName := range s.rules {
+		s.forceOverwriteRules[ruleName] = struct{}{}
+	}
+}
+
+func (s *Syncer) shouldForceOverwrite(ruleName string) bool {
+	s.forceMu.RLock()
+	defer s.forceMu.RUnlock()
+	_, ok := s.forceOverwriteRules[ruleName]
+	return ok
+}
+
+func (s *Syncer) clearForceOverwrite(ruleName string) {
+	s.forceMu.Lock()
+	defer s.forceMu.Unlock()
+	delete(s.forceOverwriteRules, ruleName)
 }
 
 func (s *Syncer) Run(ctx context.Context) error {
@@ -65,6 +111,9 @@ func (s *Syncer) Run(ctx context.Context) error {
 
 	for {
 		if err := s.runCycle(ctx); err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return nil
+			}
 			s.warnf("sync cycle failed: %v", err)
 		}
 
@@ -78,6 +127,14 @@ func (s *Syncer) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			timer.Stop()
 			return nil
+		case <-s.wakeCh:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			continue
 		case <-timer.C:
 		}
 	}
@@ -217,6 +274,9 @@ func (s *Syncer) runCycle(ctx context.Context) error {
 				continue
 			}
 			if err := s.scanDir(ctx, rule, dir, &requestBudget); err != nil {
+				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+					return ctx.Err()
+				}
 				s.warnf("scan failed rule=%s dir=%s err=%v", rule.Name, dir.SourcePath, err)
 			}
 			processed++
@@ -249,6 +309,7 @@ func (s *Syncer) reconcileFullRescans(now time.Time) error {
 			continue
 		}
 		s.debugf("completed full rescan for rule=%s", rule.Name)
+		s.clearForceOverwrite(rule.Name)
 	}
 	return nil
 }
@@ -338,10 +399,11 @@ func (s *Syncer) scanDir(ctx context.Context, rule config.Rule, dir index.DirRec
 	actualWrites := 0
 	removedFiles := 0
 	removedDirs := 0
+	forceOverwrite := s.shouldForceOverwrite(rule.Name)
 
 	for _, write := range writes {
 		existing, exists := existingFileMap[write.sourcePath]
-		shouldTrack, wrote, err := s.writeOne(rule, write, existing, exists)
+		shouldTrack, wrote, err := s.writeOne(rule, write, existing, exists, forceOverwrite)
 		if err != nil {
 			return err
 		}
@@ -457,11 +519,10 @@ func (s *Syncer) fetchEntries(ctx context.Context, sourcePath string, requestBud
 }
 
 func (s *Syncer) buildSTRMContent(sourcePath string) (string, error) {
-	publicPath := config.MapSourceToPublicPath(s.cfg.Redirect.PathMappings, sourcePath)
-	return s.redir.Build(publicPath)
+	return s.redir.Build(sourcePath)
 }
 
-func (s *Syncer) writeOne(rule config.Rule, write fileWrite, existing index.FileRecord, exists bool) (shouldTrack bool, wrote bool, err error) {
+func (s *Syncer) writeOne(rule config.Rule, write fileWrite, existing index.FileRecord, exists bool, forceOverwrite bool) (shouldTrack bool, wrote bool, err error) {
 	if err := os.MkdirAll(filepath.Dir(write.targetPath), 0o755); err != nil {
 		return false, false, fmt.Errorf("create target dir for %s: %w", write.targetPath, err)
 	}
@@ -481,9 +542,13 @@ func (s *Syncer) writeOne(rule config.Rule, write fileWrite, existing index.File
 		}
 	}
 
-	if exists && !rule.OverwriteValue(s.cfg.Sync.Overwrite) &&
+	if exists && !(forceOverwrite || rule.OverwriteValue(s.cfg.Sync.Overwrite)) &&
 		existing.ContentHash == write.contentHash && existing.TargetPath == write.targetPath {
-		return true, false, nil
+		if _, err := os.Stat(write.targetPath); err == nil {
+			return true, false, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, false, fmt.Errorf("stat target %s: %w", write.targetPath, err)
+		}
 	}
 	if exists && existing.TargetPath != write.targetPath {
 		if err := os.Remove(existing.TargetPath); err != nil && !errors.Is(err, os.ErrNotExist) {

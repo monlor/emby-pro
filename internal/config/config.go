@@ -19,302 +19,352 @@ import (
 )
 
 const (
-	defaultRuleFile            = "/config/strm-rules.yml"
-	defaultIndexDB             = "/config/strm-index.db"
-	defaultBaseDir             = "/strm"
-	defaultEmbyBaseURL         = "http://127.0.0.1:8096"
-	defaultEmbyValidatePath    = "/System/Info"
-	defaultRedirectListenAddr  = ":28096"
-	defaultRedirectPublicURL   = "http://127.0.0.1:28096"
-	defaultRedirectRoutePrefix = "/strm"
-	defaultMinFileSize         = 15 * 1024 * 1024
+	defaultConfigFile         = "/config/app.yml"
+	defaultIndexDB            = "/config/strm-index.db"
+	defaultBaseDir            = "/strm"
+	defaultEmbyBaseURL        = "http://127.0.0.1:8096"
+	defaultEmbyValidatePath   = "/System/Info"
+	defaultOpenListBaseURL    = "http://127.0.0.1:5244"
+	defaultRedirectListenAddr = ":28096"
+	defaultRedirectPublicURL  = "http://127.0.0.1:28096"
+	defaultRoutePrefix        = "/strm"
+	defaultMinFileSize        = 15 * 1024 * 1024
 )
 
-type syncProfilePreset struct {
-	RateLimitQPS        float64
-	RateLimitBurst      int
-	FullRescanInterval  time.Duration
-	MaxDirsPerCycle     int
-	MaxRequestsPerCycle int
-	HotInterval         time.Duration
-	WarmInterval        time.Duration
-	ColdInterval        time.Duration
-	HotJitter           time.Duration
-	WarmJitter          time.Duration
-	ColdJitter          time.Duration
-	UnchangedToWarm     int
-	UnchangedToCold     int
-	FailureBackoffMax   time.Duration
-	RuleCooldown        time.Duration
-}
-
 type Config struct {
-	OpenList OpenListConfig
-	Emby     EmbyConfig
-	Redirect RedirectConfig
-	Sync     SyncConfig
-	Rules    []Rule
-}
-
-type PathMapping struct {
-	SourcePrefix string
-	PublicPrefix string
+	OpenList OpenListConfig `yaml:"openlist" json:"openlist"`
+	Emby     EmbyConfig     `yaml:"emby" json:"emby"`
+	Redirect RedirectConfig `yaml:"redirect" json:"redirect"`
+	Sync     SyncConfig     `yaml:"sync" json:"sync"`
+	Rules    []Rule         `yaml:"rules" json:"rules"`
 }
 
 type OpenListConfig struct {
-	BaseURL            string
-	PublicURL          string
-	Token              string
-	Username           string
-	Password           string
-	RequestTimeout     time.Duration
-	Retry              int
-	RetryBackoff       time.Duration
-	ListPerPage        int
-	RateLimitQPS       float64
-	RateLimitBurst     int
-	InsecureSkipVerify bool
-	DisableHTTP2       bool
+	BaseURL            string        `yaml:"base_url" json:"base_url"`
+	PublicURL          string        `yaml:"public_url" json:"public_url"`
+	Token              string        `yaml:"token" json:"token"`
+	Username           string        `yaml:"username" json:"username"`
+	Password           string        `yaml:"password" json:"password"`
+	RequestTimeout     time.Duration `yaml:"request_timeout" json:"request_timeout"`
+	Retry              int           `yaml:"retry" json:"retry"`
+	RetryBackoff       time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
+	ListPerPage        int           `yaml:"list_per_page" json:"list_per_page"`
+	RateLimitQPS       float64       `yaml:"rate_limit_qps" json:"rate_limit_qps"`
+	RateLimitBurst     int           `yaml:"rate_limit_burst" json:"rate_limit_burst"`
+	InsecureSkipVerify bool          `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
+	DisableHTTP2       bool          `yaml:"disable_http2" json:"disable_http2"`
 }
 
 type SyncConfig struct {
-	BaseDir             string
-	RuleFile            string
-	IndexDB             string
-	FullRescanInterval  time.Duration
-	MaxDirsPerCycle     int
-	MaxRequestsPerCycle int
-	MinFileSize         int64
-	VideoExts           map[string]struct{}
-	CleanRemoved        bool
-	Overwrite           bool
-	LogLevel            string
-	HotInterval         time.Duration
-	WarmInterval        time.Duration
-	ColdInterval        time.Duration
-	HotJitter           time.Duration
-	WarmJitter          time.Duration
-	ColdJitter          time.Duration
-	UnchangedToWarm     int
-	UnchangedToCold     int
-	FailureBackoffMax   time.Duration
-	RuleCooldown        time.Duration
+	BaseDir             string              `yaml:"base_dir" json:"base_dir"`
+	RuleFile            string              `yaml:"-" json:"-"`
+	IndexDB             string              `yaml:"index_db" json:"index_db"`
+	FullRescanInterval  time.Duration       `yaml:"full_rescan_interval" json:"full_rescan_interval"`
+	MaxDirsPerCycle     int                 `yaml:"max_dirs_per_cycle" json:"max_dirs_per_cycle"`
+	MaxRequestsPerCycle int                 `yaml:"max_requests_per_cycle" json:"max_requests_per_cycle"`
+	MinFileSize         int64               `yaml:"min_file_size" json:"min_file_size"`
+	VideoExtsRaw        []string            `yaml:"video_exts" json:"video_exts"`
+	CleanRemoved        bool                `yaml:"clean_removed" json:"clean_removed"`
+	Overwrite           bool                `yaml:"overwrite" json:"overwrite"`
+	LogLevel            string              `yaml:"log_level" json:"log_level"`
+	HotInterval         time.Duration       `yaml:"hot_interval" json:"hot_interval"`
+	WarmInterval        time.Duration       `yaml:"warm_interval" json:"warm_interval"`
+	ColdInterval        time.Duration       `yaml:"cold_interval" json:"cold_interval"`
+	HotJitter           time.Duration       `yaml:"hot_jitter" json:"hot_jitter"`
+	WarmJitter          time.Duration       `yaml:"warm_jitter" json:"warm_jitter"`
+	ColdJitter          time.Duration       `yaml:"cold_jitter" json:"cold_jitter"`
+	UnchangedToWarm     int                 `yaml:"unchanged_to_warm" json:"unchanged_to_warm"`
+	UnchangedToCold     int                 `yaml:"unchanged_to_cold" json:"unchanged_to_cold"`
+	FailureBackoffMax   time.Duration       `yaml:"failure_backoff_max" json:"failure_backoff_max"`
+	RuleCooldown        time.Duration       `yaml:"rule_cooldown" json:"rule_cooldown"`
+	VideoExts           map[string]struct{} `yaml:"-" json:"-"`
 }
 
 type EmbyConfig struct {
-	BaseURL        string
-	ValidatePath   string
-	RequestTimeout time.Duration
-	TokenCacheTTL  time.Duration
+	BaseURL        string        `yaml:"base_url" json:"base_url"`
+	ValidatePath   string        `yaml:"validate_path" json:"validate_path"`
+	RequestTimeout time.Duration `yaml:"request_timeout" json:"request_timeout"`
+	TokenCacheTTL  time.Duration `yaml:"token_cache_ttl" json:"token_cache_ttl"`
 }
 
 type RedirectConfig struct {
-	DirectPlay       bool
-	DirectPlayWeb    bool
-	FastPlaybackInfo bool
-	DirectPlayUsers  map[string]struct{} // user IDs or names; nil means apply DirectPlay to all
-	ListenAddr       string
-	PublicURL        string
-	PathMappings     []PathMapping
-	PlayTicketSecret string
-	EphemeralSecret  bool
-	PlayTicketTTL    time.Duration
-	RoutePrefix      string
+	DirectPlay        bool                `yaml:"direct_play" json:"direct_play"`
+	DirectPlayWeb     bool                `yaml:"direct_play_web" json:"direct_play_web"`
+	FastPlaybackInfo  bool                `yaml:"fast_playback_info" json:"fast_playback_info"`
+	DirectPlayUsers   []string            `yaml:"direct_play_users" json:"direct_play_users"`
+	ListenAddr        string              `yaml:"listen_addr" json:"listen_addr"`
+	PublicURL         string              `yaml:"public_url" json:"public_url"`
+	PlayTicketSecret  string              `yaml:"play_ticket_secret" json:"play_ticket_secret"`
+	EphemeralSecret   bool                `yaml:"-" json:"ephemeral_secret"`
+	PlayTicketTTL     time.Duration       `yaml:"play_ticket_ttl" json:"play_ticket_ttl"`
+	RoutePrefix       string              `yaml:"route_prefix" json:"route_prefix"`
+	DirectPlayUserSet map[string]struct{} `yaml:"-" json:"-"`
 }
 
 type Rule struct {
-	Name         string `yaml:"name"`
-	SourcePath   string `yaml:"source_path"`
-	TargetPath   string `yaml:"target_path"`
-	Flatten      *bool  `yaml:"flatten"`
-	IncludeRegex string `yaml:"include_regex"`
-	ExcludeRegex string `yaml:"exclude_regex"`
-	URLMode      string `yaml:"url_mode"`
-	CleanRemoved *bool  `yaml:"clean_removed"`
-	Overwrite    *bool  `yaml:"overwrite"`
+	Name         string `yaml:"name" json:"name"`
+	SourcePath   string `yaml:"source_path" json:"source_path"`
+	TargetPath   string `yaml:"target_path" json:"target_path"`
+	Flatten      *bool  `yaml:"flatten,omitempty" json:"flatten,omitempty"`
+	IncludeRegex string `yaml:"include_regex,omitempty" json:"include_regex,omitempty"`
+	ExcludeRegex string `yaml:"exclude_regex,omitempty" json:"exclude_regex,omitempty"`
+	CleanRemoved *bool  `yaml:"clean_removed,omitempty" json:"clean_removed,omitempty"`
+	Overwrite    *bool  `yaml:"overwrite,omitempty" json:"overwrite,omitempty"`
 
 	includeRE *regexp.Regexp
 	excludeRE *regexp.Regexp
 }
 
-type ruleFile struct {
-	Defaults ruleDefaults `yaml:"defaults"`
-	Rules    []Rule       `yaml:"rules"`
+func Default() Config {
+	return Config{
+		OpenList: OpenListConfig{
+			BaseURL:        defaultOpenListBaseURL,
+			RequestTimeout: 15 * time.Second,
+			Retry:          3,
+			RetryBackoff:   2 * time.Second,
+			ListPerPage:    200,
+			RateLimitQPS:   0,
+			RateLimitBurst: 1,
+		},
+		Emby: EmbyConfig{
+			BaseURL:        defaultEmbyBaseURL,
+			ValidatePath:   defaultEmbyValidatePath,
+			RequestTimeout: 15 * time.Second,
+			TokenCacheTTL:  30 * time.Second,
+		},
+		Redirect: RedirectConfig{
+			DirectPlay:       true,
+			DirectPlayWeb:    false,
+			FastPlaybackInfo: false,
+			ListenAddr:       defaultRedirectListenAddr,
+			PublicURL:        defaultRedirectPublicURL,
+			PlayTicketTTL:    12 * time.Hour,
+			RoutePrefix:      defaultRoutePrefix,
+		},
+		Sync: SyncConfig{
+			BaseDir:             defaultBaseDir,
+			IndexDB:             defaultIndexDB,
+			FullRescanInterval:  24 * time.Hour,
+			MaxDirsPerCycle:     200,
+			MaxRequestsPerCycle: 1000,
+			MinFileSize:         defaultMinFileSize,
+			VideoExtsRaw:        []string{".mp4", ".mkv", ".avi", ".ts", ".mov", ".wmv", ".flv", ".mpg"},
+			CleanRemoved:        true,
+			Overwrite:           false,
+			LogLevel:            "info",
+			HotInterval:         30 * time.Minute,
+			WarmInterval:        6 * time.Hour,
+			ColdInterval:        24 * time.Hour,
+			HotJitter:           10 * time.Minute,
+			WarmJitter:          time.Hour,
+			ColdJitter:          4 * time.Hour,
+			UnchangedToWarm:     3,
+			UnchangedToCold:     7,
+			FailureBackoffMax:   24 * time.Hour,
+			RuleCooldown:        6 * time.Hour,
+		},
+		Rules: []Rule{},
+	}
 }
 
-type ruleDefaults struct {
-	URLMode      string `yaml:"url_mode"`
-	CleanRemoved *bool  `yaml:"clean_removed"`
-	Overwrite    *bool  `yaml:"overwrite"`
-	Flatten      *bool  `yaml:"flatten"`
+func EnsureConfigFile(path string) (bool, error) {
+	if strings.TrimSpace(path) == "" {
+		path = defaultConfigFile
+	}
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	if err := SaveToFile(path, Default()); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func Load() (Config, error) {
-	profilePreset, err := loadSyncProfilePreset()
+	return LoadFromFile(defaultConfigFile)
+}
+
+func LoadFromFile(path string) (Config, error) {
+	if strings.TrimSpace(path) == "" {
+		path = defaultConfigFile
+	}
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("read config file: %w", err)
 	}
+	cfg := Default()
+	if err := yaml.Unmarshal(content, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parse config file: %w", err)
+	}
+	return Normalize(cfg), nil
+}
 
-	cfg := Config{
-		OpenList: OpenListConfig{
-			BaseURL:            strings.TrimSpace(os.Getenv("OPENLIST_BASE_URL")),
-			PublicURL:          strings.TrimSpace(os.Getenv("OPENLIST_PUBLIC_URL")),
-			Token:              strings.TrimSpace(os.Getenv("OPENLIST_TOKEN")),
-			Username:           strings.TrimSpace(os.Getenv("OPENLIST_USERNAME")),
-			Password:           strings.TrimSpace(os.Getenv("OPENLIST_PASSWORD")),
-			RequestTimeout:     getenvDuration("OPENLIST_REQUEST_TIMEOUT", 15*time.Second),
-			Retry:              getenvInt("OPENLIST_RETRY", 3),
-			RetryBackoff:       getenvDuration("OPENLIST_RETRY_BACKOFF", 2*time.Second),
-			ListPerPage:        getenvInt("OPENLIST_LIST_PER_PAGE", 200),
-			RateLimitQPS:       getenvFloat("OPENLIST_RATE_LIMIT_QPS", profilePreset.RateLimitQPS),
-			RateLimitBurst:     getenvInt("OPENLIST_RATE_LIMIT_BURST", profilePreset.RateLimitBurst),
-			InsecureSkipVerify: getenvBool("OPENLIST_INSECURE_SKIP_VERIFY", false),
-			DisableHTTP2:       getenvBool("OPENLIST_DISABLE_HTTP2", false),
-		},
-		Emby: EmbyConfig{
-			BaseURL:        strings.TrimSpace(getenvString("EMBY_BASE_URL", defaultEmbyBaseURL)),
-			ValidatePath:   defaultEmbyValidatePath,
-			RequestTimeout: getenvDuration("EMBY_REQUEST_TIMEOUT", 15*time.Second),
-			TokenCacheTTL:  getenvDuration("EMBY_TOKEN_CACHE_TTL", 30*time.Second),
-		},
-		Redirect: RedirectConfig{
-			DirectPlay:       getenvBool("OPENLIST_DIRECT_PLAY", true),
-			DirectPlayWeb:    getenvBool("OPENLIST_DIRECT_PLAY_WEB", true),
-			FastPlaybackInfo: getenvBool("OPENLIST_FAST_PLAYBACKINFO", false),
-			DirectPlayUsers:  parseStringSet(getenvString("OPENLIST_DIRECT_PLAY_USERS", "")),
-			ListenAddr:       defaultRedirectListenAddr,
-			PublicURL:        strings.TrimSpace(getenvString("PUBLIC_URL", defaultRedirectPublicURL)),
-			PathMappings:     nil,
-			PlayTicketSecret: strings.TrimSpace(getenvString("PLAY_TICKET_SECRET", "")),
-			PlayTicketTTL:    getenvDuration("PLAY_TICKET_TTL", 12*time.Hour),
-			RoutePrefix:      defaultRedirectRoutePrefix,
-		},
-		Sync: SyncConfig{
-			BaseDir:             strings.TrimSpace(getenvString("STRM_BASE_DIR", defaultBaseDir)),
-			RuleFile:            strings.TrimSpace(getenvString("STRM_RULES_FILE", defaultRuleFile)),
-			IndexDB:             strings.TrimSpace(getenvString("STRM_INDEX_DB", defaultIndexDB)),
-			FullRescanInterval:  getenvDuration("STRM_FULL_RESCAN_INTERVAL", profilePreset.FullRescanInterval),
-			MaxDirsPerCycle:     getenvInt("STRM_MAX_DIRS_PER_CYCLE", profilePreset.MaxDirsPerCycle),
-			MaxRequestsPerCycle: getenvInt("STRM_MAX_REQUESTS_PER_CYCLE", profilePreset.MaxRequestsPerCycle),
-			MinFileSize:         defaultMinFileSize,
-			VideoExts:           parseExtSet(getenvString("STRM_VIDEO_EXTS", ".mp4,.mkv,.avi,.ts,.mov,.wmv,.flv,.mpg")),
-			CleanRemoved:        getenvBool("STRM_CLEAN_REMOVED", true),
-			Overwrite:           getenvBool("STRM_OVERWRITE", true),
-			LogLevel:            strings.ToLower(getenvString("STRM_LOG_LEVEL", "info")),
-			HotInterval:         getenvDuration("STRM_HOT_INTERVAL", profilePreset.HotInterval),
-			WarmInterval:        getenvDuration("STRM_WARM_INTERVAL", profilePreset.WarmInterval),
-			ColdInterval:        getenvDuration("STRM_COLD_INTERVAL", profilePreset.ColdInterval),
-			HotJitter:           getenvDuration("STRM_HOT_JITTER", profilePreset.HotJitter),
-			WarmJitter:          getenvDuration("STRM_WARM_JITTER", profilePreset.WarmJitter),
-			ColdJitter:          getenvDuration("STRM_COLD_JITTER", profilePreset.ColdJitter),
-			UnchangedToWarm:     getenvInt("STRM_UNCHANGED_TO_WARM", profilePreset.UnchangedToWarm),
-			UnchangedToCold:     getenvInt("STRM_UNCHANGED_TO_COLD", profilePreset.UnchangedToCold),
-			FailureBackoffMax:   getenvDuration("STRM_FAILURE_BACKOFF_MAX", profilePreset.FailureBackoffMax),
-			RuleCooldown:        getenvDuration("STRM_RULE_COOLDOWN", profilePreset.RuleCooldown),
-		},
+func SaveToFile(path string, cfg Config) error {
+	if strings.TrimSpace(path) == "" {
+		path = defaultConfigFile
 	}
+	cfg = Normalize(cfg)
+	body, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config file: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, body)
+}
 
-	if cfg.OpenList.BaseURL == "" {
-		return Config{}, errors.New("OPENLIST_BASE_URL is required")
+func Normalize(cfg Config) Config {
+	defaults := Default()
+
+	if strings.TrimSpace(cfg.OpenList.BaseURL) == "" {
+		cfg.OpenList.BaseURL = defaults.OpenList.BaseURL
 	}
-	if raw := strings.TrimSpace(os.Getenv("STRM_MIN_FILE_SIZE")); raw != "" {
-		size, err := parseSizeBytes(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("invalid STRM_MIN_FILE_SIZE: %w", err)
-		}
-		cfg.Sync.MinFileSize = size
+	cfg.OpenList.PublicURL = strings.TrimSpace(cfg.OpenList.PublicURL)
+	cfg.OpenList.Token = strings.TrimSpace(cfg.OpenList.Token)
+	cfg.OpenList.Username = strings.TrimSpace(cfg.OpenList.Username)
+	cfg.OpenList.Password = strings.TrimSpace(cfg.OpenList.Password)
+	if cfg.OpenList.RequestTimeout <= 0 {
+		cfg.OpenList.RequestTimeout = defaults.OpenList.RequestTimeout
 	}
-	if isEnvSet("OPENLIST_DIRECT_LINK_PERMANENT") {
-		return Config{}, errors.New("OPENLIST_DIRECT_LINK_PERMANENT has been removed: OpenList link expiry is now managed by OpenList itself")
+	if cfg.OpenList.Retry <= 0 {
+		cfg.OpenList.Retry = defaults.OpenList.Retry
 	}
-	if isEnvSet("REDIRECT_TARGET_MODE") {
-		return Config{}, errors.New("REDIRECT_TARGET_MODE has been removed: emby-pro now always resolves OpenList download routes at playback time")
+	if cfg.OpenList.RetryBackoff <= 0 {
+		cfg.OpenList.RetryBackoff = defaults.OpenList.RetryBackoff
 	}
-	if isEnvSet("STRM_SCAN_INTERVAL") {
-		return Config{}, errors.New("STRM_SCAN_INTERVAL has been removed: emby-pro now always uses adaptive directory scheduling")
-	}
-	if cfg.OpenList.Token == "" && (cfg.OpenList.Username == "" || cfg.OpenList.Password == "") {
-		return Config{}, errors.New("OPENLIST_TOKEN or OPENLIST_USERNAME/OPENLIST_PASSWORD is required")
-	}
-	if cfg.Sync.BaseDir == "" {
-		cfg.Sync.BaseDir = defaultBaseDir
-	}
-	if cfg.OpenList.RateLimitQPS < 0 {
-		return Config{}, errors.New("OPENLIST_RATE_LIMIT_QPS must be greater than or equal to zero")
+	if cfg.OpenList.ListPerPage <= 0 {
+		cfg.OpenList.ListPerPage = defaults.OpenList.ListPerPage
 	}
 	if cfg.OpenList.RateLimitBurst <= 0 {
-		cfg.OpenList.RateLimitBurst = 1
+		cfg.OpenList.RateLimitBurst = defaults.OpenList.RateLimitBurst
 	}
-	if !filepath.IsAbs(cfg.Sync.BaseDir) {
-		cfg.Sync.BaseDir = filepath.Clean(filepath.Join(string(os.PathSeparator), cfg.Sync.BaseDir))
+
+	if strings.TrimSpace(cfg.Emby.BaseURL) == "" {
+		cfg.Emby.BaseURL = defaults.Emby.BaseURL
 	}
-	if cfg.Sync.RuleFile == "" {
-		cfg.Sync.RuleFile = defaultRuleFile
-	}
-	if cfg.Sync.IndexDB == "" {
-		cfg.Sync.IndexDB = defaultIndexDB
-	}
-	if cfg.Emby.ValidatePath == "" {
-		cfg.Emby.ValidatePath = "/System/Info"
+	if strings.TrimSpace(cfg.Emby.ValidatePath) == "" {
+		cfg.Emby.ValidatePath = defaults.Emby.ValidatePath
 	}
 	if !strings.HasPrefix(cfg.Emby.ValidatePath, "/") {
 		cfg.Emby.ValidatePath = "/" + cfg.Emby.ValidatePath
 	}
-	pathMappings, err := parsePathMappings(getenvString("STRM_PATH_MAPPINGS", ""))
-	if err != nil {
-		return Config{}, fmt.Errorf("invalid STRM_PATH_MAPPINGS: %w", err)
+	if cfg.Emby.RequestTimeout <= 0 {
+		cfg.Emby.RequestTimeout = defaults.Emby.RequestTimeout
 	}
-	cfg.Redirect.PathMappings = pathMappings
-
-	envRules, err := buildEnvRules(cfg.Sync.BaseDir)
-	if err != nil {
-		return Config{}, err
+	if cfg.Emby.TokenCacheTTL <= 0 {
+		cfg.Emby.TokenCacheTTL = defaults.Emby.TokenCacheTTL
 	}
 
-	fileRules, err := loadRuleFile(cfg.Sync.RuleFile, cfg.Sync.BaseDir)
-	if err != nil {
-		return Config{}, err
+	if strings.TrimSpace(cfg.Redirect.ListenAddr) == "" {
+		cfg.Redirect.ListenAddr = defaults.Redirect.ListenAddr
 	}
-
-	merged := make(map[string]Rule, len(envRules)+len(fileRules))
-	for _, rule := range envRules {
-		merged[rule.SourcePath] = rule
+	if strings.TrimSpace(cfg.Redirect.PublicURL) == "" {
+		cfg.Redirect.PublicURL = defaults.Redirect.PublicURL
 	}
-	for _, rule := range fileRules {
-		merged[rule.SourcePath] = rule
+	if strings.TrimSpace(cfg.Redirect.RoutePrefix) == "" {
+		cfg.Redirect.RoutePrefix = defaults.Redirect.RoutePrefix
 	}
-
-	if len(merged) == 0 {
-		return Config{}, errors.New("no rules found: set OPENLIST_PATHS or provide /config/strm-rules.yml")
-	}
-
-	cfg.Rules = make([]Rule, 0, len(merged))
-	for _, rule := range merged {
-		if err := finalizeRule(&rule, cfg.Sync); err != nil {
-			return Config{}, err
-		}
-		cfg.Rules = append(cfg.Rules, rule)
-	}
-
-	sort.Slice(cfg.Rules, func(i, j int) bool {
-		return cfg.Rules[i].SourcePath < cfg.Rules[j].SourcePath
-	})
-	if err := validateRuleNames(cfg.Rules); err != nil {
-		return Config{}, err
-	}
-	if cfg.Redirect.PlayTicketSecret == "" {
-		secret, err := randomSecret(32)
-		if err != nil {
-			return Config{}, fmt.Errorf("generate PLAY_TICKET_SECRET: %w", err)
-		}
-		cfg.Redirect.PlayTicketSecret = secret
-		cfg.Redirect.EphemeralSecret = true
+	if !strings.HasPrefix(cfg.Redirect.RoutePrefix, "/") {
+		cfg.Redirect.RoutePrefix = "/" + cfg.Redirect.RoutePrefix
 	}
 	if cfg.Redirect.PlayTicketTTL <= 0 {
-		return Config{}, errors.New("PLAY_TICKET_TTL must be greater than zero")
+		cfg.Redirect.PlayTicketTTL = defaults.Redirect.PlayTicketTTL
+	}
+	cfg.Redirect.DirectPlayUserSet = parseStringSet(cfg.Redirect.DirectPlayUsers)
+
+	if strings.TrimSpace(cfg.Sync.BaseDir) == "" {
+		cfg.Sync.BaseDir = defaults.Sync.BaseDir
+	}
+	if !filepath.IsAbs(cfg.Sync.BaseDir) {
+		cfg.Sync.BaseDir = filepath.Clean(filepath.Join(string(os.PathSeparator), cfg.Sync.BaseDir))
+	}
+	if strings.TrimSpace(cfg.Sync.IndexDB) == "" {
+		cfg.Sync.IndexDB = defaults.Sync.IndexDB
 	}
 	if cfg.Sync.FullRescanInterval <= 0 {
-		return Config{}, errors.New("STRM_FULL_RESCAN_INTERVAL must be greater than zero")
+		cfg.Sync.FullRescanInterval = defaults.Sync.FullRescanInterval
+	}
+	if cfg.Sync.MaxDirsPerCycle <= 0 {
+		cfg.Sync.MaxDirsPerCycle = defaults.Sync.MaxDirsPerCycle
+	}
+	if cfg.Sync.MaxRequestsPerCycle <= 0 {
+		cfg.Sync.MaxRequestsPerCycle = defaults.Sync.MaxRequestsPerCycle
+	}
+	if cfg.Sync.MinFileSize <= 0 {
+		cfg.Sync.MinFileSize = defaults.Sync.MinFileSize
+	}
+	if len(cfg.Sync.VideoExtsRaw) == 0 {
+		cfg.Sync.VideoExtsRaw = append([]string(nil), defaults.Sync.VideoExtsRaw...)
+	}
+	cfg.Sync.VideoExts = parseExtSet(cfg.Sync.VideoExtsRaw)
+	if strings.TrimSpace(cfg.Sync.LogLevel) == "" {
+		cfg.Sync.LogLevel = defaults.Sync.LogLevel
+	}
+	cfg.Sync.LogLevel = strings.ToLower(strings.TrimSpace(cfg.Sync.LogLevel))
+	if cfg.Sync.HotInterval <= 0 {
+		cfg.Sync.HotInterval = defaults.Sync.HotInterval
+	}
+	if cfg.Sync.WarmInterval <= 0 {
+		cfg.Sync.WarmInterval = defaults.Sync.WarmInterval
+	}
+	if cfg.Sync.ColdInterval <= 0 {
+		cfg.Sync.ColdInterval = defaults.Sync.ColdInterval
+	}
+	if cfg.Sync.HotJitter < 0 {
+		cfg.Sync.HotJitter = defaults.Sync.HotJitter
+	}
+	if cfg.Sync.WarmJitter < 0 {
+		cfg.Sync.WarmJitter = defaults.Sync.WarmJitter
+	}
+	if cfg.Sync.ColdJitter < 0 {
+		cfg.Sync.ColdJitter = defaults.Sync.ColdJitter
+	}
+	if cfg.Sync.UnchangedToWarm <= 0 {
+		cfg.Sync.UnchangedToWarm = defaults.Sync.UnchangedToWarm
+	}
+	if cfg.Sync.UnchangedToCold <= 0 {
+		cfg.Sync.UnchangedToCold = defaults.Sync.UnchangedToCold
+	}
+	if cfg.Sync.FailureBackoffMax <= 0 {
+		cfg.Sync.FailureBackoffMax = defaults.Sync.FailureBackoffMax
+	}
+	if cfg.Sync.RuleCooldown <= 0 {
+		cfg.Sync.RuleCooldown = defaults.Sync.RuleCooldown
+	}
+
+	for i := range cfg.Rules {
+		if cfg.Rules[i].Flatten == nil {
+			cfg.Rules[i].Flatten = boolPtr(false)
+		}
+	}
+
+	return cfg
+}
+
+func Validate(cfg Config) (Config, error) {
+	cfg = Normalize(cfg)
+
+	if strings.TrimSpace(cfg.OpenList.BaseURL) == "" {
+		return Config{}, errors.New("openlist.base_url is required")
+	}
+	if cfg.OpenList.Token == "" && (cfg.OpenList.Username == "" || cfg.OpenList.Password == "") {
+		return Config{}, errors.New("openlist.token or openlist.username/openlist.password is required")
+	}
+	if cfg.OpenList.RateLimitQPS < 0 {
+		return Config{}, errors.New("openlist.rate_limit_qps must be greater than or equal to zero")
+	}
+
+	if cfg.Redirect.PlayTicketTTL <= 0 {
+		return Config{}, errors.New("redirect.play_ticket_ttl must be greater than zero")
+	}
+	if cfg.Sync.FullRescanInterval <= 0 {
+		return Config{}, errors.New("sync.full_rescan_interval must be greater than zero")
 	}
 	if cfg.Sync.HotInterval <= 0 || cfg.Sync.WarmInterval <= 0 || cfg.Sync.ColdInterval <= 0 {
 		return Config{}, errors.New("adaptive sync intervals must be greater than zero")
@@ -326,11 +376,40 @@ func Load() (Config, error) {
 		return Config{}, errors.New("adaptive sync unchanged thresholds are invalid")
 	}
 	if cfg.Sync.FailureBackoffMax <= 0 {
-		return Config{}, errors.New("STRM_FAILURE_BACKOFF_MAX must be greater than zero")
+		return Config{}, errors.New("sync.failure_backoff_max must be greater than zero")
 	}
 	if cfg.Sync.RuleCooldown <= 0 {
-		return Config{}, errors.New("STRM_RULE_COOLDOWN must be greater than zero")
+		return Config{}, errors.New("sync.rule_cooldown must be greater than zero")
 	}
+	if len(cfg.Rules) == 0 {
+		return Config{}, errors.New("at least one rule is required")
+	}
+
+	normalizedRules := make([]Rule, 0, len(cfg.Rules))
+	for _, rule := range cfg.Rules {
+		if err := finalizeRule(&rule, cfg.Sync); err != nil {
+			return Config{}, err
+		}
+		normalizedRules = append(normalizedRules, rule)
+	}
+	sort.Slice(normalizedRules, func(i, j int) bool {
+		return normalizedRules[i].SourcePath < normalizedRules[j].SourcePath
+	})
+	if err := validateRuleNames(normalizedRules); err != nil {
+		return Config{}, err
+	}
+	cfg.Rules = normalizedRules
+
+	if cfg.Redirect.PlayTicketSecret == "" {
+		secret, err := randomSecret(32)
+		if err != nil {
+			return Config{}, fmt.Errorf("generate play ticket secret: %w", err)
+		}
+		cfg.Redirect.PlayTicketSecret = secret
+		cfg.Redirect.EphemeralSecret = true
+	}
+
+	cfg.Redirect.DirectPlayUserSet = parseStringSet(cfg.Redirect.DirectPlayUsers)
 
 	return cfg, nil
 }
@@ -361,79 +440,6 @@ func (r Rule) OverwriteValue(defaultValue bool) bool {
 
 func (r Rule) FlattenValue() bool {
 	return r.Flatten != nil && *r.Flatten
-}
-
-func buildEnvRules(baseDir string) ([]Rule, error) {
-	raw := strings.TrimSpace(os.Getenv("OPENLIST_PATHS"))
-	if raw == "" {
-		return nil, nil
-	}
-
-	seen := make(map[string]struct{})
-	parts := strings.Split(raw, ",")
-	rules := make([]Rule, 0, len(parts))
-	for _, part := range parts {
-		sourcePath := pathutil.NormalizeSourcePath(part)
-		if sourcePath == "" {
-			continue
-		}
-		if _, ok := seen[sourcePath]; ok {
-			continue
-		}
-		seen[sourcePath] = struct{}{}
-		rules = append(rules, Rule{
-			Name:       defaultRuleName(sourcePath),
-			SourcePath: sourcePath,
-			TargetPath: defaultTargetPath(baseDir, sourcePath),
-		})
-	}
-	if len(rules) == 0 {
-		return nil, errors.New("OPENLIST_PATHS is set but no valid source path was found")
-	}
-	return rules, nil
-}
-
-func loadRuleFile(ruleFilePath, baseDir string) ([]Rule, error) {
-	content, err := os.ReadFile(ruleFilePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read rule file: %w", err)
-	}
-
-	var rf ruleFile
-	if err := yaml.Unmarshal(content, &rf); err != nil {
-		return nil, fmt.Errorf("parse rule file: %w", err)
-	}
-
-	rules := make([]Rule, 0, len(rf.Rules))
-	for i, rule := range rf.Rules {
-		if rule.SourcePath == "" {
-			return nil, fmt.Errorf("rule %d source_path is required", i+1)
-		}
-		if strings.TrimSpace(rf.Defaults.URLMode) != "" {
-			return nil, errors.New("defaults.url_mode has been removed; emby-pro now always generates system URLs and signs playback at runtime")
-		}
-		if strings.TrimSpace(rule.URLMode) != "" {
-			return nil, fmt.Errorf("rule %d url_mode has been removed", i+1)
-		}
-		if rule.CleanRemoved == nil {
-			rule.CleanRemoved = rf.Defaults.CleanRemoved
-		}
-		if rule.Overwrite == nil {
-			rule.Overwrite = rf.Defaults.Overwrite
-		}
-		if rule.Flatten == nil {
-			rule.Flatten = rf.Defaults.Flatten
-		}
-		if rule.TargetPath == "" {
-			rule.TargetPath = defaultTargetPath(baseDir, pathutil.NormalizeSourcePath(rule.SourcePath))
-		}
-		rules = append(rules, rule)
-	}
-
-	return rules, nil
 }
 
 func finalizeRule(rule *Rule, syncCfg SyncConfig) error {
@@ -488,108 +494,6 @@ func defaultRuleName(sourcePath string) string {
 	return name
 }
 
-func MapSourceToPublicPath(mappings []PathMapping, sourcePath string) string {
-	sourcePath = pathutil.NormalizeSourcePath(sourcePath)
-	if sourcePath == "" {
-		return ""
-	}
-
-	bestLen := -1
-	mapped := sourcePath
-	for _, mapping := range mappings {
-		if !matchesPathPrefix(sourcePath, mapping.SourcePrefix) {
-			continue
-		}
-		if len(mapping.SourcePrefix) <= bestLen {
-			continue
-		}
-		bestLen = len(mapping.SourcePrefix)
-		suffix := strings.TrimPrefix(sourcePath, mapping.SourcePrefix)
-		mapped = pathutil.NormalizeSourcePath(mapping.PublicPrefix + suffix)
-	}
-	return mapped
-}
-
-func MapPublicToSourcePath(mappings []PathMapping, publicPath string) string {
-	publicPath = pathutil.NormalizeSourcePath(publicPath)
-	if publicPath == "" {
-		return ""
-	}
-
-	bestLen := -1
-	mapped := publicPath
-	for _, mapping := range mappings {
-		if !matchesPathPrefix(publicPath, mapping.PublicPrefix) {
-			continue
-		}
-		if len(mapping.PublicPrefix) <= bestLen {
-			continue
-		}
-		bestLen = len(mapping.PublicPrefix)
-		suffix := strings.TrimPrefix(publicPath, mapping.PublicPrefix)
-		mapped = pathutil.NormalizeSourcePath(mapping.SourcePrefix + suffix)
-	}
-	return mapped
-}
-
-func matchesPathPrefix(fullPath, prefix string) bool {
-	if fullPath == prefix {
-		return true
-	}
-	if prefix == "/" {
-		return strings.HasPrefix(fullPath, "/")
-	}
-	return strings.HasPrefix(fullPath, prefix+"/")
-}
-
-func parsePathMappings(raw string) ([]PathMapping, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-
-	mappings := make([]PathMapping, 0)
-	seenSource := make(map[string]struct{})
-	seenPublic := make(map[string]struct{})
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		pieces := strings.SplitN(part, ":", 2)
-		if len(pieces) != 2 {
-			return nil, fmt.Errorf("expected source format /stable:/active, got %q", part)
-		}
-
-		sourcePrefix := pathutil.NormalizeSourcePath(pieces[0])
-		publicPrefix := pathutil.NormalizeSourcePath(pieces[1])
-		if sourcePrefix == "" || publicPrefix == "" {
-			return nil, fmt.Errorf("mapping paths cannot be empty: %q", part)
-		}
-		if _, ok := seenSource[sourcePrefix]; ok {
-			return nil, fmt.Errorf("duplicate source prefix %s", sourcePrefix)
-		}
-		if _, ok := seenPublic[publicPrefix]; ok {
-			return nil, fmt.Errorf("duplicate public prefix %s", publicPrefix)
-		}
-		seenSource[sourcePrefix] = struct{}{}
-		seenPublic[publicPrefix] = struct{}{}
-		mappings = append(mappings, PathMapping{
-			SourcePrefix: sourcePrefix,
-			PublicPrefix: publicPrefix,
-		})
-	}
-
-	sort.Slice(mappings, func(i, j int) bool {
-		if len(mappings[i].SourcePrefix) != len(mappings[j].SourcePrefix) {
-			return len(mappings[i].SourcePrefix) > len(mappings[j].SourcePrefix)
-		}
-		return mappings[i].SourcePrefix < mappings[j].SourcePrefix
-	})
-	return mappings, nil
-}
-
 func compileOptionalPattern(pattern string) (*regexp.Regexp, error) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
@@ -609,75 +513,15 @@ func compileOptionalPattern(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(pattern)
 }
 
-func getenvString(key, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func getenvBool(key string, fallback bool) bool {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func getenvInt(key string, fallback int) int {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func getenvFloat(key string, fallback float64) float64 {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func getenvDuration(key string, fallback time.Duration) time.Duration {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	if num, err := strconv.Atoi(value); err == nil {
-		return time.Duration(num) * time.Second
-	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func parseStringSet(raw string) map[string]struct{} {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+func parseStringSet(values []string) map[string]struct{} {
+	if len(values) == 0 {
 		return nil
 	}
 	result := make(map[string]struct{})
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			result[part] = struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			result[value] = struct{}{}
 		}
 	}
 	if len(result) == 0 {
@@ -686,9 +530,9 @@ func parseStringSet(raw string) map[string]struct{} {
 	return result
 }
 
-func parseExtSet(raw string) map[string]struct{} {
+func parseExtSet(values []string) map[string]struct{} {
 	result := make(map[string]struct{})
-	for _, part := range strings.Split(raw, ",") {
+	for _, part := range values {
 		part = strings.TrimSpace(strings.ToLower(part))
 		if part == "" {
 			continue
@@ -754,93 +598,26 @@ func validateRuleNames(rules []Rule) error {
 	return nil
 }
 
+func writeFileAtomic(target string, content []byte) error {
+	tempFile, err := os.CreateTemp(filepath.Dir(target), ".emby-pro-*")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+
+	if _, err := tempFile.Write(content); err != nil {
+		tempFile.Close()
+		return err
+	}
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, target)
+}
+
 func boolPtr(value bool) *bool {
 	return &value
-}
-
-func isEnvSet(key string) bool {
-	_, ok := os.LookupEnv(key)
-	return ok
-}
-
-func loadSyncProfilePreset() (syncProfilePreset, error) {
-	profile := strings.ToLower(strings.TrimSpace(os.Getenv("STRM_SYNC_PROFILE")))
-	switch profile {
-	case "":
-		return syncProfilePreset{
-			RateLimitQPS:        0,
-			RateLimitBurst:      1,
-			FullRescanInterval:  24 * time.Hour,
-			MaxDirsPerCycle:     200,
-			MaxRequestsPerCycle: 1000,
-			HotInterval:         30 * time.Minute,
-			WarmInterval:        6 * time.Hour,
-			ColdInterval:        24 * time.Hour,
-			HotJitter:           10 * time.Minute,
-			WarmJitter:          time.Hour,
-			ColdJitter:          4 * time.Hour,
-			UnchangedToWarm:     3,
-			UnchangedToCold:     7,
-			FailureBackoffMax:   24 * time.Hour,
-			RuleCooldown:        6 * time.Hour,
-		}, nil
-	case "conservative":
-		return syncProfilePreset{
-			RateLimitQPS:        0.2,
-			RateLimitBurst:      1,
-			FullRescanInterval:  24 * time.Hour,
-			MaxDirsPerCycle:     20,
-			MaxRequestsPerCycle: 60,
-			HotInterval:         30 * time.Minute,
-			WarmInterval:        6 * time.Hour,
-			ColdInterval:        24 * time.Hour,
-			HotJitter:           10 * time.Minute,
-			WarmJitter:          time.Hour,
-			ColdJitter:          4 * time.Hour,
-			UnchangedToWarm:     3,
-			UnchangedToCold:     7,
-			FailureBackoffMax:   24 * time.Hour,
-			RuleCooldown:        6 * time.Hour,
-		}, nil
-	case "balanced":
-		return syncProfilePreset{
-			RateLimitQPS:        0.5,
-			RateLimitBurst:      1,
-			FullRescanInterval:  12 * time.Hour,
-			MaxDirsPerCycle:     50,
-			MaxRequestsPerCycle: 150,
-			HotInterval:         20 * time.Minute,
-			WarmInterval:        4 * time.Hour,
-			ColdInterval:        12 * time.Hour,
-			HotJitter:           5 * time.Minute,
-			WarmJitter:          30 * time.Minute,
-			ColdJitter:          2 * time.Hour,
-			UnchangedToWarm:     3,
-			UnchangedToCold:     6,
-			FailureBackoffMax:   12 * time.Hour,
-			RuleCooldown:        4 * time.Hour,
-		}, nil
-	case "aggressive":
-		return syncProfilePreset{
-			RateLimitQPS:        1,
-			RateLimitBurst:      2,
-			FullRescanInterval:  6 * time.Hour,
-			MaxDirsPerCycle:     100,
-			MaxRequestsPerCycle: 300,
-			HotInterval:         10 * time.Minute,
-			WarmInterval:        2 * time.Hour,
-			ColdInterval:        6 * time.Hour,
-			HotJitter:           2 * time.Minute,
-			WarmJitter:          15 * time.Minute,
-			ColdJitter:          time.Hour,
-			UnchangedToWarm:     2,
-			UnchangedToCold:     5,
-			FailureBackoffMax:   6 * time.Hour,
-			RuleCooldown:        2 * time.Hour,
-		}, nil
-	default:
-		return syncProfilePreset{}, fmt.Errorf("invalid STRM_SYNC_PROFILE %q: expected conservative, balanced, or aggressive", profile)
-	}
 }
 
 func randomSecret(size int) (string, error) {

@@ -9,7 +9,7 @@ import (
 	"github.com/monlor/emby-pro/internal/config"
 )
 
-func TestScheduleFullRescanOnlyQueuesRoot(t *testing.T) {
+func TestScheduleFullRescanQueuesAllKnownDirs(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "index.db"))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -36,11 +36,8 @@ func TestScheduleFullRescanOnlyQueuesRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DueDirs() error = %v", err)
 	}
-	if len(dirs) != 1 {
-		t.Fatalf("expected only root to be due, got %d", len(dirs))
-	}
-	if got, want := dirs[0].SourcePath, "/media"; got != want {
-		t.Fatalf("due dir = %s, want %s", got, want)
+	if len(dirs) != 2 {
+		t.Fatalf("expected root and known child dir to be due, got %d", len(dirs))
 	}
 }
 
@@ -83,6 +80,37 @@ func TestRequestFullRescanQueuesPendingWhenActive(t *testing.T) {
 	}
 	if !states[0].PendingFullRescan {
 		t.Fatalf("expected pending full rescan")
+	}
+}
+
+func TestRequestFullRescanSchedulesAllKnownDirsImmediately(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	rule := config.Rule{Name: "media", SourcePath: "/media", TargetPath: "/strm/media"}
+	if err := store.EnsureRule(rule, now); err != nil {
+		t.Fatalf("EnsureRule() error = %v", err)
+	}
+	future := now.Add(24 * time.Hour)
+	for _, dir := range []string{"/media/a", "/media/b"} {
+		if err := store.UpsertDir(rule.Name, dir, "/media", 1, future); err != nil {
+			t.Fatalf("UpsertDir(%s) error = %v", dir, err)
+		}
+	}
+	if _, _, err := store.RequestFullRescan(rule.Name, now); err != nil {
+		t.Fatalf("RequestFullRescan() error = %v", err)
+	}
+
+	dirs, err := store.DueDirs(10, now)
+	if err != nil {
+		t.Fatalf("DueDirs() error = %v", err)
+	}
+	if len(dirs) != 3 {
+		t.Fatalf("expected root and child dirs to all be due, got %d", len(dirs))
 	}
 }
 

@@ -7,47 +7,10 @@ services:
     container_name: emby-pro-local
     restart: unless-stopped
     environment:
-      # Override these via exported env vars or a local .env file if needed.
+      # Runtime business config now lives in /config/app.yml.
       PUID: ${PUID:-501}
       PGID: ${PGID:-20}
       TZ: ${TZ:-Asia/Shanghai}
-
-      OPENLIST_BASE_URL: ${OPENLIST_BASE_URL:-https://list.monlor.cn:843}
-      OPENLIST_PUBLIC_URL: ${OPENLIST_PUBLIC_URL:-}
-      OPENLIST_TOKEN: ${OPENLIST_TOKEN:-}
-      OPENLIST_USERNAME: ${OPENLIST_USERNAME:-test}
-      OPENLIST_PASSWORD: ${OPENLIST_PASSWORD:-abc12345}
-      OPENLIST_DIRECT_PLAY: ${OPENLIST_DIRECT_PLAY:-true}
-      OPENLIST_DIRECT_PLAY_WEB: ${OPENLIST_DIRECT_PLAY_WEB:-false}
-      OPENLIST_FAST_PLAYBACKINFO: ${OPENLIST_FAST_PLAYBACKINFO:-true}
-      OPENLIST_PATHS: ${OPENLIST_PATHS:-/115pan/视频影音/电影}
-      # STRM_PATH_MAPPINGS: /115pan_cookie:/115pan
-
-      STRM_BASE_DIR: /strm
-      STRM_SYNC_PROFILE: ${STRM_SYNC_PROFILE:-conservative}
-      # 如需局部覆盖 profile，再单独设置下面这些变量；这些限流只作用于 .strm 同步扫描。
-      # OPENLIST_RATE_LIMIT_QPS: ${OPENLIST_RATE_LIMIT_QPS:-0.2}
-      # OPENLIST_RATE_LIMIT_BURST: ${OPENLIST_RATE_LIMIT_BURST:-1}
-      # STRM_FULL_RESCAN_INTERVAL: ${STRM_FULL_RESCAN_INTERVAL:-24h}
-      # STRM_MAX_DIRS_PER_CYCLE: ${STRM_MAX_DIRS_PER_CYCLE:-20}
-      # STRM_MAX_REQUESTS_PER_CYCLE: ${STRM_MAX_REQUESTS_PER_CYCLE:-60}
-      # STRM_HOT_INTERVAL: ${STRM_HOT_INTERVAL:-30m}
-      # STRM_WARM_INTERVAL: ${STRM_WARM_INTERVAL:-6h}
-      # STRM_COLD_INTERVAL: ${STRM_COLD_INTERVAL:-24h}
-      # STRM_HOT_JITTER: ${STRM_HOT_JITTER:-10m}
-      # STRM_WARM_JITTER: ${STRM_WARM_JITTER:-1h}
-      # STRM_COLD_JITTER: ${STRM_COLD_JITTER:-4h}
-      # STRM_UNCHANGED_TO_WARM: ${STRM_UNCHANGED_TO_WARM:-3}
-      # STRM_UNCHANGED_TO_COLD: ${STRM_UNCHANGED_TO_COLD:-7}
-      # STRM_FAILURE_BACKOFF_MAX: ${STRM_FAILURE_BACKOFF_MAX:-24h}
-      # STRM_RULE_COOLDOWN: ${STRM_RULE_COOLDOWN:-6h}
-
-      PLAY_TICKET_SECRET: ${PLAY_TICKET_SECRET:-}
-      PLAY_TICKET_TTL: ${PLAY_TICKET_TTL:-12h}
-
-      # OPENLIST_DIRECT_PLAY_USERS: monlor
-
-      STRM_OVERWRITE: false
 
     ports:
       # Access Emby Web and redirect/proxy traffic through the local redirect port.

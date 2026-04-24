@@ -123,7 +123,7 @@ func TestHandleSTRMRejectsExpiredPlayTicket(t *testing.T) {
 		PlayTicketSecret: "test-secret",
 		RoutePrefix:      "/strm",
 		PlayTicketTTL:    time.Hour,
-	}, openlistClient, embyClient, log.New(io.Discard, "", 0), time.Minute)
+	}, openlistClient, embyClient, AdminCallbacks{}, log.New(io.Discard, "", 0), time.Minute)
 
 	token, err := encodePlayTicket([]byte("test-secret"), playTicketClaims{
 		Provider:   openListProvider,
@@ -257,7 +257,7 @@ func TestHandleSTRMUsesOpenListPublicURLForRedirect(t *testing.T) {
 		PlayTicketSecret: "test-secret",
 		RoutePrefix:      "/strm",
 		PlayTicketTTL:    time.Hour,
-	}, openlistClient, embyClient, log.New(io.Discard, "", 0), time.Minute)
+	}, openlistClient, embyClient, AdminCallbacks{}, log.New(io.Discard, "", 0), time.Minute)
 
 	req := httptest.NewRequest(http.MethodGet, "/strm/openlist/media/demo.mp4", nil)
 	req.RemoteAddr = "127.0.0.1:43210"
@@ -307,7 +307,6 @@ func TestHandleSTRMMapsPublicRouteBackToSourcePath(t *testing.T) {
 	server := newTestServer(t, openlistServer.URL, embyServer.URL, config.RedirectConfig{
 		ListenAddr:       ":8097",
 		PublicURL:        "https://emby.example.com",
-		PathMappings:     []config.PathMapping{{SourcePrefix: "/115pan_cookie", PublicPrefix: "/115pan"}},
 		PlayTicketSecret: "test-secret",
 		RoutePrefix:      "/strm",
 		PlayTicketTTL:    time.Hour,
@@ -321,7 +320,7 @@ func TestHandleSTRMMapsPublicRouteBackToSourcePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	if got, want := parsed.Path, "/strm/openlist/115pan/movies/demo.mp4"; got != want {
+	if got, want := parsed.Path, "/strm/openlist/115pan_cookie/movies/demo.mp4"; got != want {
 		t.Fatalf("ticket path = %s, want %s", got, want)
 	}
 
@@ -340,7 +339,6 @@ func TestHandleSTRMMapsPublicRouteBackToSourcePath(t *testing.T) {
 func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 	builder := NewBuilder(config.RedirectConfig{
 		PublicURL:        "http://127.0.0.1:8097",
-		PathMappings:     []config.PathMapping{{SourcePrefix: "/115pan_cookie", PublicPrefix: "/115pan"}},
 		PlayTicketSecret: "test-secret",
 		RoutePrefix:      "/strm",
 	})
@@ -376,7 +374,6 @@ func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 		DirectPlay:       true,
 		ListenAddr:       ":8097",
 		PublicURL:        "http://127.0.0.1:8097",
-		PathMappings:     []config.PathMapping{{SourcePrefix: "/115pan_cookie", PublicPrefix: "/115pan"}},
 		PlayTicketSecret: "test-secret",
 		RoutePrefix:      "/strm",
 		PlayTicketTTL:    12 * time.Hour,
@@ -403,7 +400,7 @@ func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse(path) error = %v", err)
 	}
-	if got, want := parsedPath.Path, "/strm/openlist/115pan/测试 demo.mp4"; got != want {
+	if got, want := parsedPath.Path, "/strm/openlist/115pan_cookie/测试 demo.mp4"; got != want {
 		t.Fatalf("rewritten path = %s, want %s", got, want)
 	}
 	if parsedPath.Query().Get(playTicketParam) == "" {
@@ -418,7 +415,7 @@ func TestHandlePlaybackInfoRewritesManagedPathToTicket(t *testing.T) {
 	if parsedDirect.Scheme != "" || parsedDirect.Host != "" {
 		t.Fatalf("expected relative DirectStreamUrl, got %s", directStreamURL)
 	}
-	if got, want := parsedDirect.Path, "/strm/openlist/115pan/测试 demo.mp4"; got != want {
+	if got, want := parsedDirect.Path, "/strm/openlist/115pan_cookie/测试 demo.mp4"; got != want {
 		t.Fatalf("unexpected DirectStreamUrl path: %s want %s", got, want)
 	}
 	if parsedDirect.Query().Get(playTicketParam) == "" {
@@ -1170,5 +1167,5 @@ func newTestServer(t *testing.T, openlistBaseURL, embyBaseURL string, redirectCf
 		t.Fatalf("emby.NewClient() error = %v", err)
 	}
 
-	return NewServer(redirectCfg, openlistClient, embyClient, log.New(io.Discard, "", 0), time.Minute)
+	return NewServer(redirectCfg, openlistClient, embyClient, AdminCallbacks{}, log.New(io.Discard, "", 0), time.Minute)
 }
