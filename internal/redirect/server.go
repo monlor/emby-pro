@@ -1509,26 +1509,31 @@ const adminPageHTML = `<!doctype html>
   </div>
   <script>
     let latest = null;
-    let workingToken = '';
+    let workingAuth = null;
     let treeContextPath = '';
     let openListDialogPath = '/';
     let openListDialogRow = null;
-    function listCandidateTokens() {
-      const tokens = [];
+    function listCandidateAuth() {
+      const candidates = [];
+      let fallbackDeviceId = '';
+      try {
+        fallbackDeviceId = (localStorage.getItem('_deviceId2') || '').trim();
+      } catch (_) {}
       try {
         const raw = localStorage.getItem('servercredentials3');
-        if (!raw) return tokens;
+        if (!raw) return candidates;
         const parsed = JSON.parse(raw);
         const servers = parsed?.Servers || [];
         const origin = window.location.origin;
         const host = window.location.host;
         for (const server of servers) {
-          const candidates = [
+          const deviceId = (server?.DeviceId || fallbackDeviceId || '').trim();
+          const addresses = [
             server.ManualAddress,
             server.LocalAddress,
             server.RemoteAddress
           ].filter(Boolean);
-          const matched = candidates.some(value => {
+          const matched = addresses.some(value => {
             try {
               const url = new URL(value, origin);
               return url.origin === origin || url.host === host;
@@ -1537,26 +1542,50 @@ const adminPageHTML = `<!doctype html>
             }
           });
           if (!matched) continue;
-          if (server.AccessToken) tokens.push(server.AccessToken);
+          if (server.AccessToken) candidates.push({ token: server.AccessToken, deviceId });
           for (const user of (server.Users || [])) {
-            if (user && user.AccessToken) tokens.push(user.AccessToken);
+            if (user && user.AccessToken) candidates.push({ token: user.AccessToken, deviceId });
           }
         }
       } catch (_) {}
-      return [...new Set(tokens.filter(Boolean))];
+      if (!candidates.length && fallbackDeviceId) {
+        candidates.push({ token: '', deviceId: fallbackDeviceId });
+      }
+      const seen = new Set();
+      return candidates.filter(candidate => {
+        candidate.token = (candidate.token || '').trim();
+        candidate.deviceId = (candidate.deviceId || '').trim();
+        if (!candidate.token) return false;
+        const key = candidate.token + '|' + candidate.deviceId;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+    function authURL(rawURL, token, deviceId) {
+      const url = new URL(rawURL, window.location.origin);
+      if (token) url.searchParams.set('X-Emby-Token', token);
+      if (deviceId) url.searchParams.set('X-Emby-Device-Id', deviceId);
+      return url.toString();
     }
     async function authedFetch(url, options = {}) {
-      const candidates = workingToken ? [workingToken] : listCandidateTokens();
+      const candidates = workingAuth?.token ? [workingAuth] : listCandidateAuth();
       if (!candidates.length) throw new Error('未找到 Emby 登录信息，请先在当前地址登录 Emby。');
       let lastError = '';
-      for (const token of candidates) {
-        const resp = await fetch(url, {
+      for (const candidate of candidates) {
+        const token = candidate.token;
+        const deviceId = candidate.deviceId || '';
+        const resp = await fetch(authURL(url, token, deviceId), {
           ...options,
           credentials: 'same-origin',
-          headers: { ...(options.headers || {}), 'X-Emby-Token': token }
+          headers: {
+            ...(options.headers || {}),
+            'X-Emby-Token': token,
+            ...(deviceId ? { 'X-Emby-Device-Id': deviceId } : {})
+          }
         });
         if (resp.ok) {
-          workingToken = token;
+          workingAuth = { token, deviceId };
           return resp;
         }
         const text = await resp.text();

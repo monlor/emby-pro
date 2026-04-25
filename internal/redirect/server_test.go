@@ -16,6 +16,18 @@ import (
 	"github.com/monlor/emby-pro/internal/openlist"
 )
 
+func TestAdminPageIncludesEmbyDeviceIDInAuthRequests(t *testing.T) {
+	if !strings.Contains(adminPageHTML, "localStorage.getItem('_deviceId2')") {
+		t.Fatalf("admin page should read Emby device id from localStorage")
+	}
+	if !strings.Contains(adminPageHTML, "'X-Emby-Device-Id': deviceId") {
+		t.Fatalf("admin page should send device id in auth requests")
+	}
+	if !strings.Contains(adminPageHTML, "url.searchParams.set('X-Emby-Device-Id', deviceId)") {
+		t.Fatalf("admin page should preserve device id in auth query params")
+	}
+}
+
 func TestHandleSTRMRequiresValidPlayTicket(t *testing.T) {
 	openlistServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
